@@ -32,3 +32,64 @@
 
 ```bash
 curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/main/install.sh | sh
+
+## Альтернативный способ (ручная установка)
+Если вы предпочитаете сначала изучить скрипт:
+
+bash
+curl -sL https://raw.githubusercontent.com/ВАШ_ЛОГИН/padavan-warp-bypass/main/install.sh -o install.sh
+cat install.sh   # просмотр содержимого
+sh install.sh    # запуск
+
+✅ Проверка работы
+Откройте YouTube – видео должно воспроизводиться.
+
+Зайдите в Discord – каналы и картинки должны грузиться.
+
+Проверьте Telegram и WhatsApp Web – отправка сообщений и медиа работает.
+
+*Если какой-то сервис не открывается, подождите 20–30 секунд и обновите страницу.*
+
+⚙️ Как это устроено
+ipset хранит IP-адреса, трафик к которым нужно маркировать.
+
+dnsmasq автоматически добавляет IP в ipset при DNS-запросах от устройств.
+
+iptables маркирует пакеты меткой 0xca6c.
+
+Policy routing направляет помеченные пакеты в отдельную таблицу 51, где маршрут по умолчанию ведёт в туннель wg0.
+
+Cron каждую ночь в 04:00 скачивает свежие списки доменов и обновляет ipset.
+
+Watchdog каждые 15 секунд проверяет целостность правил и восстанавливает их при необходимости.
+
+🔧 Ручное добавление доменов (для тестирования)
+Если вы хотите быстро добавить домен или IP в список маршрутизации:
+
+bash
+sh /etc/storage/add_to_ipset.sh instagram.com
+Удалить IP: sh /etc/storage/del_from_ipset.sh <IP>.
+
+🚫 Известные ограничения
+Сервисы Meta (Instagram, Facebook, Threads) могут работать нестабильно или не работать вовсе. Это ограничение на стороне Cloudflare WARP, которое невозможно обойти настройками роутера.
+
+Если вам критичен Instagram, используйте отдельный VPN-клиент непосредственно на устройстве.
+
+🗑 Удаление
+bash
+rm /etc/storage/{ipset_update.sh,route_watchdog.sh}
+ipset destroy bypass_domains 2>/dev/null
+iptables -t mangle -D PREROUTING -m set --match-set bypass_domains dst -j MARK --set-mark 0xca6c 2>/dev/null
+sed -i '/ipset_update.sh\|route_watchdog.sh/d' /etc/storage/started_script.sh
+sed -i '/0 4 \* \* \*.*ipset_update/d' /etc/storage/cron/crontabs/admin
+mtd_storage.sh save
+reboot
+📄 Лицензия
+MIT License – вы можете свободно использовать, модифицировать и распространять этот код при условии сохранения авторских прав и дисклеймера.
+
+🤝 Благодарности
+itdoginfo/allow-domains – за актуальные списки доменов.
+
+Сообществу Padavan за отличную прошивку.
+
+Разработано с ❤️ для удобства пользователей.
