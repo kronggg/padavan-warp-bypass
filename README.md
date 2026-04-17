@@ -28,6 +28,14 @@
 
 ## 📥 Установка (одной командой)
 
+### Проверка доступности
+
+Перед установкой убедитесь, что репозиторий доступен:
+
+curl -I https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/main/install.sh | head -1
+
+Ожидаемый ответ: HTTP/2 200
+
 Подключитесь к роутеру по SSH и выполните:
 
 curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/main/install.sh | sh
