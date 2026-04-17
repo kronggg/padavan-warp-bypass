@@ -31,4 +31,4 @@
 Подключитесь к роутеру по SSH и выполните:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/ВАШ_ЛОГИН/padavan-warp-bypass/main/install.sh | sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/main/install.sh | sh
