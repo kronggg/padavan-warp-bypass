@@ -30,16 +30,17 @@
 
 Подключитесь к роутеру по SSH и выполните:
 
-bash
 curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/main/install.sh | sh
 
 ## Альтернативный способ (ручная установка)
 Если вы предпочитаете сначала изучить скрипт:
 
-bash
-curl -sL https://raw.githubusercontent.com/ВАШ_ЛОГИН/padavan-warp-bypass/main/install.sh -o install.sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/main/install.sh -o install.sh
+
 cat install.sh   # просмотр содержимого
+
 sh install.sh    # запуск
+
 
 ✅ Проверка работы
 Откройте YouTube – видео должно воспроизводиться.
