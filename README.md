@@ -62,17 +62,15 @@ Watchdog каждые 15 секунд проверяет целостность 
 ##🔧 Ручное добавление доменов (для тестирования)
 Если вы хотите быстро добавить домен или IP в список маршрутизации:
 
-bash
-sh /etc/storage/add_to_ipset.sh domen.com
+sh /etc/storage/add_to_ipset.sh domen.com # Добавить IP
 
-Удалить IP: sh /etc/storage/del_from_ipset.sh <IP>.
+sh /etc/storage/del_from_ipset.sh <IP> # Удалить IP
 
 ## 🚫 Известные ограничения
 Сервисы Meta (Instagram, Facebook, Threads) могут работать нестабильно или не работать вовсе. Это ограничение на стороне Cloudflare WARP, которое невозможно обойти настройками роутера.
 Если вам критичны эти ресурсы, используйте отдельный VPN-клиент непосредственно на устройстве.
 
 ## 🗑 Удаление
-bash
 rm /etc/storage/{ipset_update.sh,route_watchdog.sh}
 ipset destroy bypass_domains 2>/dev/null
 iptables -t mangle -D PREROUTING -m set --match-set bypass_domains dst -j MARK --set-mark 0xca6c 2>/dev/null
