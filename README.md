@@ -82,6 +82,7 @@ sh /etc/storage/del_from_ipset.sh <IP> # Удалить IP
 
 ## 🗑 Удаление
 Подключитесь к роутеру по SSH и выполните:
+
 curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/main/uninstall.sh | sh
 
 ## 📄 Лицензия
