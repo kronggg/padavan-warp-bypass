@@ -81,18 +81,11 @@ sh /etc/storage/del_from_ipset.sh <IP> # Удалить IP
 Если вам критичны эти ресурсы, используйте отдельный VPN-клиент непосредственно на устройстве.
 
 ## 🗑 Удаление
-rm /etc/storage/{ipset_update.sh,route_watchdog.sh}
-ipset destroy bypass_domains 2>/dev/null
-iptables -t mangle -D PREROUTING -m set --match-set bypass_domains dst -j MARK --set-mark 0xca6c 2>/dev/null
-sed -i '/ipset_update.sh\|route_watchdog.sh/d' /etc/storage/started_script.sh
-sed -i '/0 4 \* \* \*.*ipset_update/d' /etc/storage/cron/crontabs/admin
-mtd_storage.sh save
-reboot
-
+Подключитесь к роутеру по SSH и выполните:
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/main/uninstall.sh | sh
 
 ## 📄 Лицензия
 MIT License – вы можете свободно использовать, модифицировать и распространять этот код при условии сохранения авторских прав и дисклеймера.
-
 
 ## 🤝 Благодарности
 itdoginfo/allow-domains – за актуальные списки доменов.
