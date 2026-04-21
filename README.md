@@ -35,14 +35,14 @@
 
 Подключитесь к роутеру по SSH и выполните:
 
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/main/install.sh | sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/install.sh | sh
 
 После завершения (2–5 минут) роутер можно перезагрузить для проверки автоматического старта: reboot.
 
 Альтернативный способ (ручная установка)
 Если вы предпочитаете сначала изучить скрипт:
 
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/main/install.sh -o install.sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/install.sh -o install.sh
 cat install.sh   # просмотр содержимого
 sh install.sh    # запуск
 
@@ -96,11 +96,12 @@ Watchdog каждые 60 секунд анализирует буфер, изв�
 Если вы хотите быстро добавить домен или IP в список маршрутизации:
 
 sh /etc/storage/add_to_ipset.sh instagram.com
+
 Удалить IP: sh /etc/storage/del_from_ipset.sh <IP>.
 
 ## 🗑 Удаление
 
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/main/uninstall.sh | sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/uninstall.sh | sh
 
 После выполнения роутер автоматически перезагрузится и вернётся к стандартной маршрутизации.
 
