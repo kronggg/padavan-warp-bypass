@@ -46,6 +46,7 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/inst
 curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/install.sh -o install.sh
 
 cat install.sh   # просмотр содержимого
+
 sh install.sh    # запуск
 
 ✅ Проверка работы
