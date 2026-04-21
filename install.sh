@@ -1,9 +1,35 @@
 #!/bin/sh
+# =============================================================================
+#  Установщик системы селективной маршрутизации через AmneziaWG/WARP для Padavan
+#  Версия 3.8.2 (стабильная бета) от 2026-04-22
+#  Включает автоопределение параметров, автообучение, поддержку IPv6, CONNMARK,
+#  блокировку повторного запуска и исправленную проверку свежести кэша.
+# =============================================================================
+
+echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.8.2 ==="
+
 # -----------------------------------------------------------------------------
-# Настройки (значения по умолчанию)
+# 1. Создание основного скрипта ipset_update.sh (v3.8.2)
+# -----------------------------------------------------------------------------
+cat > /etc/storage/ipset_update.sh << 'EOF_SCRIPT'
+#!/bin/sh
+# -----------------------------------------------------------------------------
+# Блокировка повторного запуска
+# -----------------------------------------------------------------------------
+LOCK_FILE="/tmp/ipset_update.lock"
+if [ -f "$LOCK_FILE" ]; then
+    echo "[$(date)] Скрипт уже выполняется, завершаюсь." >> /tmp/ipset_update.log
+    exit 0
+fi
+touch "$LOCK_FILE"
+trap 'rm -f "$LOCK_FILE"' EXIT
+
+# -----------------------------------------------------------------------------
+# Настройки
 # -----------------------------------------------------------------------------
 IPSET_NAME="bypass_domains"
 VPN_IFACE="wg0"
+# Значения по умолчанию (будут переопределены после поднятия интерфейса)
 TABLE_ID=51
 MARK_VALUE="0xca6c"
 
@@ -37,6 +63,10 @@ web.telegram.org
 "
 
 log() { local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $1"; echo "$msg"; echo "$msg" >> "$LOG_FILE"; }
+
+# -----------------------------------------------------------------------------
+# Ожидание VPN-интерфейса и автоопределение параметров
+# -----------------------------------------------------------------------------
 wait_for_vpn() {
     local elapsed=0
     log "Ожидаю $VPN_IFACE (макс ${VPN_WAIT_TIMEOUT}s)..."
@@ -46,7 +76,14 @@ wait_for_vpn() {
     done
     log "$VPN_IFACE поднялся (${elapsed}s)"
 
-    # Автоматическое определение параметров после поднятия интерфейса
+    # Однократная быстрая проверка готовности туннеля (не блокирует)
+    if curl --interface "$VPN_IFACE" --max-time 5 -s -o /dev/null -w "%{http_code}" http://cp.cloudflare.com | grep -qE "200|301|302|204"; then
+        log "Туннель готов (curl OK)"
+    else
+        log "Туннель пока не отвечает, продолжаем без ожидания"
+    fi
+
+    # Автоматическое определение параметров
     TABLE_ID=$(ip rule show | grep -E "fwmark 0x[0-9a-f]+.*lookup [0-9]+" | head -1 | sed -E 's/.*lookup ([0-9]+).*/\1/')
     [ -z "$TABLE_ID" ] && TABLE_ID=51
 
@@ -63,6 +100,10 @@ wait_for_vpn() {
     log "Определены параметры: TABLE_ID=$TABLE_ID, MARK_VALUE=$MARK_VALUE"
     return 0
 }
+
+# -----------------------------------------------------------------------------
+# Проверка прохождения трафика через туннель
+# -----------------------------------------------------------------------------
 check_vpn_works() {
     if curl --interface "$VPN_IFACE" --max-time 5 -s -o /dev/null -w "%{http_code}" http://1.1.1.1 | grep -qE "200|301|302"; then
         log "VPN OK (curl)"; return 0
@@ -70,11 +111,19 @@ check_vpn_works() {
         log "ВНИМАНИЕ: VPN curl не проходит"; return 1
     fi
 }
+
+# -----------------------------------------------------------------------------
+# Создание ipset
+# -----------------------------------------------------------------------------
 create_ipset() {
     modprobe ip_set 2>/dev/null; modprobe ip_set_hash_ip 2>/dev/null
     ipset list "$IPSET_NAME" >/dev/null 2>&1 || { log "Создаю ipset $IPSET_NAME"; ipset create "$IPSET_NAME" hash:ip hashsize 4096 maxelem 65536; }
     ipset create bypass_domains6 hash:ip family inet6 hashsize 1024 maxelem 65536 -exist 2>/dev/null
 }
+
+# -----------------------------------------------------------------------------
+# Настройка policy routing (IPv4 и IPv6)
+# -----------------------------------------------------------------------------
 setup_policy_routing() {
     # IPv4
     ip rule del pref 5182 2>/dev/null
@@ -90,6 +139,10 @@ setup_policy_routing() {
     sysctl -w net.ipv6.conf."$VPN_IFACE".rp_filter=0 2>/dev/null
     log "Policy routing: fwmark $MARK_VALUE -> table $TABLE_ID (dev $VPN_IFACE, IPv4/IPv6)"
 }
+
+# -----------------------------------------------------------------------------
+# Настройка правил iptables (MARK и CONNMARK)
+# -----------------------------------------------------------------------------
 setup_iptables() {
     modprobe xt_set 2>/dev/null
     modprobe xt_CONNMARK 2>/dev/null
@@ -114,7 +167,15 @@ setup_iptables() {
         log "Правило ip6tables MARK добавлено"
     fi
 }
+
+# -----------------------------------------------------------------------------
+# Резолв одного домена
+# -----------------------------------------------------------------------------
 resolve_one() { nslookup "$1" 8.8.8.8 2>/dev/null | awk '/^Address [0-9]+:/{print $NF}' | grep -E '^([0-9]+\.){3}[0-9]+$' | grep -v '^127\.' | grep -v '^0\.' > "/tmp/ipset_r/$1" 2>/dev/null; }
+
+# -----------------------------------------------------------------------------
+# Параллельный резолв всех доменов из файла
+# -----------------------------------------------------------------------------
 resolve_parallel() {
     local total i pids pid
     rm -rf /tmp/ipset_r; mkdir -p /tmp/ipset_r
@@ -152,6 +213,10 @@ resolve_parallel() {
     log "IP добавлено=$ok, не резолвится=$fail"
     log "Уникальных IP: $(wc -l < $IP_CACHE_FILE)"
 }
+
+# -----------------------------------------------------------------------------
+# Скачивание списков доменов и обновление кеша
+# -----------------------------------------------------------------------------
 update_domains() {
     local tmp="/tmp/ipset_domains.tmp"
     > "$tmp"
@@ -170,6 +235,10 @@ update_domains() {
     log "Доменов: $(wc -l < $CACHE_FILE)"
     resolve_parallel "$CACHE_FILE"
 }
+
+# -----------------------------------------------------------------------------
+# Восстановление ipset из кеша
+# -----------------------------------------------------------------------------
 restore_from_cache() {
     [ -f "$IP_CACHE_FILE" ] && [ -s "$IP_CACHE_FILE" ] || return 1
     local count=0
@@ -179,16 +248,30 @@ restore_from_cache() {
     done < "$IP_CACHE_FILE"
     log "Восстановлено из кеша: $count IP"
 }
+
+# -----------------------------------------------------------------------------
+# Проверка свежести кеша доменов (исправленная версия)
+# -----------------------------------------------------------------------------
 cache_is_fresh() {
     [ -f "$CACHE_FILE" ] || return 1
     local mtime now age
     now=$(date +%s)
-    mtime=$(date -r "$CACHE_FILE" +%s 2>/dev/null) || return 1
+    # Пробуем получить время модификации через date -r (работает в BusyBox)
+    mtime=$(date -r "$CACHE_FILE" +%s 2>/dev/null)
+    # Если date -r не сработал, пробуем через ls (fallback)
+    if [ -z "$mtime" ]; then
+        mtime=$(ls -l --time-style=+%s "$CACHE_FILE" 2>/dev/null | awk '{print $6}')
+    fi
+    # Если всё равно не получилось, считаем кэш устаревшим
+    [ -z "$mtime" ] && return 1
     age=$((now - mtime))
     [ $age -lt $CACHE_TTL ]
 }
 
-log "=== СТАРТ v3.8.1 ==="
+# -----------------------------------------------------------------------------
+# Главный блок выполнения
+# -----------------------------------------------------------------------------
+log "=== СТАРТ v3.8.2 ==="
 create_ipset
 if wait_for_vpn; then
     setup_policy_routing
@@ -206,3 +289,141 @@ else
 fi
 log "IP в ipset: $(ipset list $IPSET_NAME 2>/dev/null | grep -c '^[0-9]')"
 log "=== КОНЕЦ ==="
+EOF_SCRIPT
+
+chmod +x /etc/storage/ipset_update.sh
+
+# -----------------------------------------------------------------------------
+# 2. Настройка dnsmasq
+# -----------------------------------------------------------------------------
+cat >> /etc/storage/dnsmasq/dnsmasq.conf << 'EOF_DNSMASQ'
+
+### Селективная маршрутизация: автоматическое добавление IP в bypass_domains
+ipset=/discord.com/gateway.discord.gg/cdn.discordapp.com/discordapp.com/discord.gg/bypass_domains
+ipset=/youtube.com/youtu.be/googlevideo.com/ytimg.com/youtube-nocookie.com/youtubekids.com/bypass_domains
+ipset=/t.me/telegram.org/core.telegram.org/web.telegram.org/bypass_domains
+EOF_DNSMASQ
+
+kill -HUP $(pidof dnsmasq) 2>/dev/null
+
+# -----------------------------------------------------------------------------
+# 3. Добавление в автозагрузку с задержкой и повторной попыткой
+# -----------------------------------------------------------------------------
+grep -q "ipset_update.sh" /etc/storage/started_script.sh || \
+    echo "( sleep 60 && sh /etc/storage/ipset_update.sh || ( sleep 30 && sh /etc/storage/ipset_update.sh ) ) &" >> /etc/storage/started_script.sh
+
+# -----------------------------------------------------------------------------
+# 4. Создание улучшенного watchdog (v3.8) с автообучением
+# -----------------------------------------------------------------------------
+cat > /etc/storage/route_watchdog.sh << 'EOF_WATCHDOG'
+#!/bin/sh
+INTERVAL=15
+ANALYZE_INTERVAL=60
+LAST_ANALYZE=0
+
+while true; do
+    # 1. Проверка ip rule (без "not")
+    if ! ip rule show | grep "5182" | grep -qv "not"; then
+        ip rule del pref 5182 2>/dev/null
+        ip rule add fwmark 0xca6c lookup 51 pref 5182
+        echo "[$(date)] Watchdog: исправлено ip rule" >> /tmp/route_watchdog.log
+    fi
+
+    # 2. Проверка таблицы 51
+    if ! ip route show table 51 | grep -q "default dev wg0"; then
+        ip route replace default dev wg0 table 51
+        echo "[$(date)] Watchdog: исправлен маршрут в table 51" >> /tmp/route_watchdog.log
+    fi
+
+    # 3. Проверка rp_filter
+    if [ "$(sysctl -n net.ipv4.conf.wg0.rp_filter 2>/dev/null)" != "0" ]; then
+        echo 0 > /proc/sys/net/ipv4/conf/wg0/rp_filter
+        echo "[$(date)] Watchdog: исправлен rp_filter" >> /tmp/route_watchdog.log
+    fi
+
+    # 4. Проверка правила iptables MARK
+    if ! iptables -t mangle -C PREROUTING -m set --match-set bypass_domains dst -j MARK --set-mark 0xca6c 2>/dev/null; then
+        iptables -t mangle -A PREROUTING -m set --match-set bypass_domains dst -j MARK --set-mark 0xca6c
+        echo "[$(date)] Watchdog: добавлено правило iptables MARK" >> /tmp/route_watchdog.log
+    fi
+
+    # 5. Проверка CONNMARK save
+    if ! iptables -t mangle -C PREROUTING -m set --match-set bypass_domains dst -j CONNMARK --set-mark 0xca6c 2>/dev/null; then
+        iptables -t mangle -A PREROUTING -m set --match-set bypass_domains dst -j CONNMARK --set-mark 0xca6c
+        echo "[$(date)] Watchdog: добавлено правило CONNMARK save" >> /tmp/route_watchdog.log
+    fi
+
+    # 6. Проверка CONNMARK restore
+    if ! iptables -t mangle -C PREROUTING -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null; then
+        iptables -t mangle -A PREROUTING -m connmark --mark 0xca6c -j CONNMARK --restore-mark
+        echo "[$(date)] Watchdog: добавлено правило CONNMARK restore" >> /tmp/route_watchdog.log
+    fi
+
+    # 7. Проверка ip6tables MARK
+    if ! ip6tables -t mangle -C PREROUTING -m set --match-set bypass_domains6 dst -j MARK --set-mark 0xca6c 2>/dev/null; then
+        ip6tables -t mangle -A PREROUTING -m set --match-set bypass_domains6 dst -j MARK --set-mark 0xca6c
+        echo "[$(date)] Watchdog: добавлено правило ip6tables MARK" >> /tmp/route_watchdog.log
+    fi
+
+    # 8. Проверка IPv6 policy routing
+    if ! ip -6 rule show | grep -q "5182.*fwmark 0xca6c lookup 51"; then
+        ip -6 rule del pref 5182 2>/dev/null
+        ip -6 rule add fwmark 0xca6c lookup 51 pref 5182
+        ip -6 route replace default dev wg0 table 51
+        echo "[$(date)] Watchdog: исправлен IPv6 policy routing" >> /tmp/route_watchdog.log
+    fi
+
+    # 9. Проверка наполненности ipset (запуск только если нет блокировки)
+    ENTRIES=$(ipset list bypass_domains 2>/dev/null | grep -oE 'Number of entries: [0-9]+' | awk '{print $NF}')
+    if [ -n "$ENTRIES" ] && [ "$ENTRIES" -lt 100 ]; then
+        if [ ! -f /tmp/ipset_update.lock ]; then
+            echo "[$(date)] Watchdog: ipset почти пуст ($ENTRIES IP), запускаю ipset_update.sh" >> /tmp/route_watchdog.log
+            sh /etc/storage/ipset_update.sh &
+        fi
+    fi
+
+    # 10. АВТООБУЧЕНИЕ: анализ неудачных SYN-пакетов
+    NOW=$(date +%s)
+    if [ $(( NOW - LAST_ANALYZE )) -ge $ANALYZE_INTERVAL ]; then
+        LAST_ANALYZE=$NOW
+        dmesg | grep -E "DPT=443.*SYN|SYN.*DPT=443" | tail -30 | while read line; do
+            DST_IP=$(echo "$line" | grep -oE 'DST=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | cut -d'=' -f2)
+            if [ -n "$DST_IP" ] && ! ipset test bypass_domains "$DST_IP" 2>/dev/null; then
+                ipset add bypass_domains "$DST_IP" -exist
+                echo "[$(date)] Watchdog: Автоматически добавлен IP $DST_IP из неудачного соединения" >> /tmp/route_watchdog.log
+            fi
+        done
+        dmesg -c > /dev/null 2>&1
+    fi
+
+    sleep $INTERVAL
+done
+EOF_WATCHDOG
+
+chmod +x /etc/storage/route_watchdog.sh
+
+# -----------------------------------------------------------------------------
+# 5. Запуск watchdog в автозагрузке
+# -----------------------------------------------------------------------------
+grep -q "route_watchdog.sh" /etc/storage/started_script.sh || \
+    echo "( sleep 90 && /etc/storage/route_watchdog.sh & ) &" >> /etc/storage/started_script.sh
+
+# -----------------------------------------------------------------------------
+# 6. Настройка ежедневного cron
+# -----------------------------------------------------------------------------
+if [ -d /etc/storage/cron/crontabs ]; then
+    CRON_FILE="/etc/storage/cron/crontabs/admin"
+    grep -q "ipset_update.sh" "$CRON_FILE" 2>/dev/null || \
+        echo "0 4 * * * sh /etc/storage/ipset_update.sh > /tmp/ipset_update_cron.log 2>&1" >> "$CRON_FILE"
+    killall crond 2>/dev/null && crond
+fi
+
+# -----------------------------------------------------------------------------
+# 7. Сохранение и первый запуск
+# -----------------------------------------------------------------------------
+mtd_storage.sh save
+
+echo "=============================================="
+echo "Установка v3.8.2 завершена. Запускаю первый резолв..."
+echo "=============================================="
+sh /etc/storage/ipset_update.sh
