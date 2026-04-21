@@ -1,14 +1,14 @@
 #!/bin/sh
 # =============================================================================
 #  Установщик системы селективной маршрутизации через AmneziaWG/WARP для Padavan
-#  Версия 3.7-beta (включает CONNMARK, IPv6, улучшенный watchdog)
-#  Проходит финальное тестирование. Стабильная версия: 3.6
+#  Версия 3.8 (стабильная) от 2026-04-21
+#  Включает автообучение watchdog, поддержку IPv6, CONNMARK и ежедневный cron.
 # =============================================================================
 
-echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.7-beta ==="
+echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.8 ==="
 
 # -----------------------------------------------------------------------------
-# 1. Создание основного скрипта ipset_update.sh (v3.7)
+# 1. Создание основного скрипта ipset_update.sh (v3.8)
 # -----------------------------------------------------------------------------
 cat > /etc/storage/ipset_update.sh << 'EOF_SCRIPT'
 #!/bin/sh
@@ -180,7 +180,7 @@ cache_is_fresh() {
     [ $age -lt $CACHE_TTL ]
 }
 
-log "=== СТАРТ v3.7 ==="
+log "=== СТАРТ v3.8 ==="
 create_ipset
 if wait_for_vpn; then
     setup_policy_routing
@@ -222,11 +222,13 @@ grep -q "ipset_update.sh" /etc/storage/started_script.sh || \
     echo "sleep 40 && sh /etc/storage/ipset_update.sh &" >> /etc/storage/started_script.sh
 
 # -----------------------------------------------------------------------------
-# 4. Создание улучшенного watchdog (v3.7)
+# 4. Создание улучшенного watchdog (v3.8) с автообучением
 # -----------------------------------------------------------------------------
 cat > /etc/storage/route_watchdog.sh << 'EOF_WATCHDOG'
 #!/bin/sh
-INTERVAL=15
+INTERVAL=15                   # Основной интервал проверки (сек)
+ANALYZE_INTERVAL=60           # Интервал анализа неудачных соединений (сек)
+LAST_ANALYZE=0
 
 while true; do
     # 1. Проверка ip rule (без "not")
@@ -287,6 +289,21 @@ while true; do
         sh /etc/storage/ipset_update.sh &
     fi
 
+    # 10. АВТООБУЧЕНИЕ: анализ неудачных SYN-пакетов (TCP-блокировки)
+    NOW=$(date +%s)
+    if [ $(( NOW - LAST_ANALYZE )) -ge $ANALYZE_INTERVAL ]; then
+        LAST_ANALYZE=$NOW
+        # Ищем записи о SYN-пакетах к порту 443 в любом порядке
+        dmesg | grep -E "DPT=443.*SYN|SYN.*DPT=443" | tail -30 | while read line; do
+            DST_IP=$(echo "$line" | grep -oE 'DST=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | cut -d'=' -f2)
+            if [ -n "$DST_IP" ] && ! ipset test bypass_domains "$DST_IP" 2>/dev/null; then
+                ipset add bypass_domains "$DST_IP" -exist
+                echo "[$(date)] Watchdog: Автоматически добавлен IP $DST_IP из неудачного соединения" >> /tmp/route_watchdog.log
+            fi
+        done
+        dmesg -c > /dev/null 2>&1
+    fi
+
     sleep $INTERVAL
 done
 EOF_WATCHDOG
@@ -315,6 +332,6 @@ fi
 mtd_storage.sh save
 
 echo "=============================================="
-echo "Установка v3.7-beta завершена. Запускаю первый резолв..."
+echo "Установка v3.8 завершена. Запускаю первый резолв..."
 echo "=============================================="
 sh /etc/storage/ipset_update.sh
