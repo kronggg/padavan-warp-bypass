@@ -1,21 +1,61 @@
 #!/bin/sh
 # =============================================================================
 #  Установщик системы селективной маршрутизации через AmneziaWG/WARP для Padavan
-#  Версия 3.8 (стабильная) от 2026-04-21
-#  Включает автообучение watchdog, поддержку IPv6, CONNMARK и ежедневный cron.
+#  Версия 3.8.1 (стабильная бета) от 2026-04-21
+#  Включает автоопределение параметров, автообучение, поддержку IPv6 и CONNMARK.
 # =============================================================================
 
-echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.8 ==="
+echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.8.1 ==="
 
 # -----------------------------------------------------------------------------
-# 1. Создание основного скрипта ipset_update.sh (v3.8)
+# 1. Создание основного скрипта ipset_update.sh (v3.8.1)
 # -----------------------------------------------------------------------------
 cat > /etc/storage/ipset_update.sh << 'EOF_SCRIPT'
 #!/bin/sh
+# -----------------------------------------------------------------------------
+# Автоматическое определение параметров VPN-интерфейса
+# -----------------------------------------------------------------------------
 IPSET_NAME="bypass_domains"
-MARK_VALUE="0xca6c"
 VPN_IFACE="wg0"
-TABLE_ID=51
+
+# Ждём появления интерфейса (макс 10 секунд)
+for i in 1 2 3 4 5; do
+    ip link show "$VPN_IFACE" >/dev/null 2>&1 && break
+    sleep 2
+done
+
+if ip link show "$VPN_IFACE" >/dev/null 2>&1; then
+    # Определяем таблицу маршрутизации (ищем правило с fwmark и lookup)
+    TABLE_ID=$(ip rule show | grep -E "fwmark 0x[0-9a-f]+.*lookup [0-9]+" | head -1 | sed -E 's/.*lookup ([0-9]+).*/\1/')
+    if [ -z "$TABLE_ID" ]; then
+        TABLE_ID=51
+        echo "Не удалось определить таблицу, используется значение по умолчанию: $TABLE_ID"
+    fi
+
+    # Определяем метку fwmark (пытаемся получить через wg, awg или ip rule)
+    if command -v wg >/dev/null 2>&1; then
+        MARK_VALUE=$(wg show "$VPN_IFACE" fwmark 2>/dev/null | awk '{print $2}')
+    elif command -v awg >/dev/null 2>&1; then
+        MARK_VALUE=$(awg show "$VPN_IFACE" fwmark 2>/dev/null | awk '{print $2}')
+    fi
+    if [ -z "$MARK_VALUE" ]; then
+        # Пробуем извлечь метку из правил ip rule
+        MARK_VALUE=$(ip rule show | grep -E "fwmark 0x[0-9a-f]+.*lookup $TABLE_ID" | head -1 | sed -E 's/.*fwmark (0x[0-9a-f]+).*/\1/')
+    fi
+    if [ -z "$MARK_VALUE" ]; then
+        MARK_VALUE="0xca6c"
+        echo "Не удалось определить fwmark, используется значение по умолчанию: $MARK_VALUE"
+    fi
+
+    echo "Определены параметры: VPN_IFACE=$VPN_IFACE, TABLE_ID=$TABLE_ID, MARK_VALUE=$MARK_VALUE"
+else
+    echo "Ошибка: Интерфейс $VPN_IFACE не найден после ожидания."
+    exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# Остальные настройки
+# -----------------------------------------------------------------------------
 CACHE_FILE="/etc/storage/ipset_domains.cache"
 IP_CACHE_FILE="/etc/storage/ipset_ips.cache"
 LOG_FILE="/tmp/ipset_update.log"
@@ -180,7 +220,7 @@ cache_is_fresh() {
     [ $age -lt $CACHE_TTL ]
 }
 
-log "=== СТАРТ v3.8 ==="
+log "=== СТАРТ v3.8.1 ==="
 create_ipset
 if wait_for_vpn; then
     setup_policy_routing
@@ -332,6 +372,6 @@ fi
 mtd_storage.sh save
 
 echo "=============================================="
-echo "Установка v3.8 завершена. Запускаю первый резолв..."
+echo "Установка v3.8.1 завершена. Запускаю первый резолв..."
 echo "=============================================="
 sh /etc/storage/ipset_update.sh
