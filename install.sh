@@ -269,13 +269,10 @@ cache_is_fresh() {
     [ -f "$CACHE_FILE" ] || return 1
     local mtime now age
     now=$(date +%s)
-    # Пробуем получить время модификации через date -r (работает в BusyBox)
     mtime=$(date -r "$CACHE_FILE" +%s 2>/dev/null)
-    # Если date -r не сработал, пробуем через ls (fallback)
     if [ -z "$mtime" ]; then
         mtime=$(ls -l --time-style=+%s "$CACHE_FILE" 2>/dev/null | awk '{print $6}')
     fi
-    # Если всё равно не получилось, считаем кэш устаревшим
     [ -z "$mtime" ] && return 1
     age=$((now - mtime))
     [ $age -lt $CACHE_TTL ]
