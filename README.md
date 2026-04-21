@@ -40,9 +40,11 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/inst
 После завершения (2–5 минут) роутер можно перезагрузить для проверки автоматического старта: reboot.
 
 Альтернативный способ (ручная установка)
+
 Если вы предпочитаете сначала изучить скрипт:
 
 curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/install.sh -o install.sh
+
 cat install.sh   # просмотр содержимого
 sh install.sh    # запуск
 
