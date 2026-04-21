@@ -1,61 +1,12 @@
 #!/bin/sh
-# =============================================================================
-#  Установщик системы селективной маршрутизации через AmneziaWG/WARP для Padavan
-#  Версия 3.8.1 (стабильная бета) от 2026-04-21
-#  Включает автоопределение параметров, автообучение, поддержку IPv6 и CONNMARK.
-# =============================================================================
-
-echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.8.1 ==="
-
 # -----------------------------------------------------------------------------
-# 1. Создание основного скрипта ipset_update.sh (v3.8.1)
-# -----------------------------------------------------------------------------
-cat > /etc/storage/ipset_update.sh << 'EOF_SCRIPT'
-#!/bin/sh
-# -----------------------------------------------------------------------------
-# Автоматическое определение параметров VPN-интерфейса
+# Настройки (значения по умолчанию)
 # -----------------------------------------------------------------------------
 IPSET_NAME="bypass_domains"
 VPN_IFACE="wg0"
+TABLE_ID=51
+MARK_VALUE="0xca6c"
 
-# Ждём появления интерфейса (макс 10 секунд)
-for i in 1 2 3 4 5; do
-    ip link show "$VPN_IFACE" >/dev/null 2>&1 && break
-    sleep 2
-done
-
-if ip link show "$VPN_IFACE" >/dev/null 2>&1; then
-    # Определяем таблицу маршрутизации (ищем правило с fwmark и lookup)
-    TABLE_ID=$(ip rule show | grep -E "fwmark 0x[0-9a-f]+.*lookup [0-9]+" | head -1 | sed -E 's/.*lookup ([0-9]+).*/\1/')
-    if [ -z "$TABLE_ID" ]; then
-        TABLE_ID=51
-        echo "Не удалось определить таблицу, используется значение по умолчанию: $TABLE_ID"
-    fi
-
-    # Определяем метку fwmark (пытаемся получить через wg, awg или ip rule)
-    if command -v wg >/dev/null 2>&1; then
-        MARK_VALUE=$(wg show "$VPN_IFACE" fwmark 2>/dev/null | awk '{print $2}')
-    elif command -v awg >/dev/null 2>&1; then
-        MARK_VALUE=$(awg show "$VPN_IFACE" fwmark 2>/dev/null | awk '{print $2}')
-    fi
-    if [ -z "$MARK_VALUE" ]; then
-        # Пробуем извлечь метку из правил ip rule
-        MARK_VALUE=$(ip rule show | grep -E "fwmark 0x[0-9a-f]+.*lookup $TABLE_ID" | head -1 | sed -E 's/.*fwmark (0x[0-9a-f]+).*/\1/')
-    fi
-    if [ -z "$MARK_VALUE" ]; then
-        MARK_VALUE="0xca6c"
-        echo "Не удалось определить fwmark, используется значение по умолчанию: $MARK_VALUE"
-    fi
-
-    echo "Определены параметры: VPN_IFACE=$VPN_IFACE, TABLE_ID=$TABLE_ID, MARK_VALUE=$MARK_VALUE"
-else
-    echo "Ошибка: Интерфейс $VPN_IFACE не найден после ожидания."
-    exit 1
-fi
-
-# -----------------------------------------------------------------------------
-# Остальные настройки
-# -----------------------------------------------------------------------------
 CACHE_FILE="/etc/storage/ipset_domains.cache"
 IP_CACHE_FILE="/etc/storage/ipset_ips.cache"
 LOG_FILE="/tmp/ipset_update.log"
@@ -93,7 +44,24 @@ wait_for_vpn() {
         [ $elapsed -ge $VPN_WAIT_TIMEOUT ] && log "ВНИМАНИЕ: $VPN_IFACE не поднялся" && return 1
         sleep 5; elapsed=$((elapsed+5))
     done
-    log "$VPN_IFACE поднялся (${elapsed}s)"; return 0
+    log "$VPN_IFACE поднялся (${elapsed}s)"
+
+    # Автоматическое определение параметров после поднятия интерфейса
+    TABLE_ID=$(ip rule show | grep -E "fwmark 0x[0-9a-f]+.*lookup [0-9]+" | head -1 | sed -E 's/.*lookup ([0-9]+).*/\1/')
+    [ -z "$TABLE_ID" ] && TABLE_ID=51
+
+    if command -v wg >/dev/null 2>&1; then
+        MARK_VALUE=$(wg show "$VPN_IFACE" fwmark 2>/dev/null | awk '{print $2}')
+    elif command -v awg >/dev/null 2>&1; then
+        MARK_VALUE=$(awg show "$VPN_IFACE" fwmark 2>/dev/null | awk '{print $2}')
+    fi
+    if [ -z "$MARK_VALUE" ]; then
+        MARK_VALUE=$(ip rule show | grep -E "fwmark 0x[0-9a-f]+.*lookup $TABLE_ID" | head -1 | sed -E 's/.*fwmark (0x[0-9a-f]+).*/\1/')
+    fi
+    [ -z "$MARK_VALUE" ] && MARK_VALUE="0xca6c"
+
+    log "Определены параметры: TABLE_ID=$TABLE_ID, MARK_VALUE=$MARK_VALUE"
+    return 0
 }
 check_vpn_works() {
     if curl --interface "$VPN_IFACE" --max-time 5 -s -o /dev/null -w "%{http_code}" http://1.1.1.1 | grep -qE "200|301|302"; then
@@ -238,140 +206,3 @@ else
 fi
 log "IP в ipset: $(ipset list $IPSET_NAME 2>/dev/null | grep -c '^[0-9]')"
 log "=== КОНЕЦ ==="
-EOF_SCRIPT
-
-chmod +x /etc/storage/ipset_update.sh
-
-# -----------------------------------------------------------------------------
-# 2. Настройка dnsmasq
-# -----------------------------------------------------------------------------
-cat >> /etc/storage/dnsmasq/dnsmasq.conf << 'EOF_DNSMASQ'
-
-### Селективная маршрутизация: автоматическое добавление IP в bypass_domains
-ipset=/discord.com/gateway.discord.gg/cdn.discordapp.com/discordapp.com/discord.gg/bypass_domains
-ipset=/youtube.com/youtu.be/googlevideo.com/ytimg.com/youtube-nocookie.com/youtubekids.com/bypass_domains
-ipset=/t.me/telegram.org/core.telegram.org/web.telegram.org/bypass_domains
-EOF_DNSMASQ
-
-kill -HUP $(pidof dnsmasq) 2>/dev/null
-
-# -----------------------------------------------------------------------------
-# 3. Добавление в автозагрузку
-# -----------------------------------------------------------------------------
-grep -q "ipset_update.sh" /etc/storage/started_script.sh || \
-    echo "sleep 40 && sh /etc/storage/ipset_update.sh &" >> /etc/storage/started_script.sh
-
-# -----------------------------------------------------------------------------
-# 4. Создание улучшенного watchdog (v3.8) с автообучением
-# -----------------------------------------------------------------------------
-cat > /etc/storage/route_watchdog.sh << 'EOF_WATCHDOG'
-#!/bin/sh
-INTERVAL=15                   # Основной интервал проверки (сек)
-ANALYZE_INTERVAL=60           # Интервал анализа неудачных соединений (сек)
-LAST_ANALYZE=0
-
-while true; do
-    # 1. Проверка ip rule (без "not")
-    if ! ip rule show | grep "5182" | grep -qv "not"; then
-        ip rule del pref 5182 2>/dev/null
-        ip rule add fwmark 0xca6c lookup 51 pref 5182
-        echo "[$(date)] Watchdog: исправлено ip rule" >> /tmp/route_watchdog.log
-    fi
-
-    # 2. Проверка таблицы 51
-    if ! ip route show table 51 | grep -q "default dev wg0"; then
-        ip route replace default dev wg0 table 51
-        echo "[$(date)] Watchdog: исправлен маршрут в table 51" >> /tmp/route_watchdog.log
-    fi
-
-    # 3. Проверка rp_filter
-    if [ "$(sysctl -n net.ipv4.conf.wg0.rp_filter 2>/dev/null)" != "0" ]; then
-        echo 0 > /proc/sys/net/ipv4/conf/wg0/rp_filter
-        echo "[$(date)] Watchdog: исправлен rp_filter" >> /tmp/route_watchdog.log
-    fi
-
-    # 4. Проверка правила iptables MARK
-    if ! iptables -t mangle -C PREROUTING -m set --match-set bypass_domains dst -j MARK --set-mark 0xca6c 2>/dev/null; then
-        iptables -t mangle -A PREROUTING -m set --match-set bypass_domains dst -j MARK --set-mark 0xca6c
-        echo "[$(date)] Watchdog: добавлено правило iptables MARK" >> /tmp/route_watchdog.log
-    fi
-
-    # 5. Проверка CONNMARK save
-    if ! iptables -t mangle -C PREROUTING -m set --match-set bypass_domains dst -j CONNMARK --set-mark 0xca6c 2>/dev/null; then
-        iptables -t mangle -A PREROUTING -m set --match-set bypass_domains dst -j CONNMARK --set-mark 0xca6c
-        echo "[$(date)] Watchdog: добавлено правило CONNMARK save" >> /tmp/route_watchdog.log
-    fi
-
-    # 6. Проверка CONNMARK restore
-    if ! iptables -t mangle -C PREROUTING -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null; then
-        iptables -t mangle -A PREROUTING -m connmark --mark 0xca6c -j CONNMARK --restore-mark
-        echo "[$(date)] Watchdog: добавлено правило CONNMARK restore" >> /tmp/route_watchdog.log
-    fi
-
-    # 7. Проверка ip6tables MARK
-    if ! ip6tables -t mangle -C PREROUTING -m set --match-set bypass_domains6 dst -j MARK --set-mark 0xca6c 2>/dev/null; then
-        ip6tables -t mangle -A PREROUTING -m set --match-set bypass_domains6 dst -j MARK --set-mark 0xca6c
-        echo "[$(date)] Watchdog: добавлено правило ip6tables MARK" >> /tmp/route_watchdog.log
-    fi
-
-    # 8. Проверка IPv6 policy routing
-    if ! ip -6 rule show | grep -q "5182.*fwmark 0xca6c lookup 51"; then
-        ip -6 rule del pref 5182 2>/dev/null
-        ip -6 rule add fwmark 0xca6c lookup 51 pref 5182
-        ip -6 route replace default dev wg0 table 51
-        echo "[$(date)] Watchdog: исправлен IPv6 policy routing" >> /tmp/route_watchdog.log
-    fi
-
-    # 9. Проверка наполненности ipset (если меньше 100 IP — запускаем основной скрипт)
-    ENTRIES=$(ipset list bypass_domains 2>/dev/null | grep -oE 'Number of entries: [0-9]+' | awk '{print $NF}')
-    if [ -n "$ENTRIES" ] && [ "$ENTRIES" -lt 100 ]; then
-        echo "[$(date)] Watchdog: ipset почти пуст ($ENTRIES IP), запускаю ipset_update.sh" >> /tmp/route_watchdog.log
-        sh /etc/storage/ipset_update.sh &
-    fi
-
-    # 10. АВТООБУЧЕНИЕ: анализ неудачных SYN-пакетов (TCP-блокировки)
-    NOW=$(date +%s)
-    if [ $(( NOW - LAST_ANALYZE )) -ge $ANALYZE_INTERVAL ]; then
-        LAST_ANALYZE=$NOW
-        # Ищем записи о SYN-пакетах к порту 443 в любом порядке
-        dmesg | grep -E "DPT=443.*SYN|SYN.*DPT=443" | tail -30 | while read line; do
-            DST_IP=$(echo "$line" | grep -oE 'DST=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | cut -d'=' -f2)
-            if [ -n "$DST_IP" ] && ! ipset test bypass_domains "$DST_IP" 2>/dev/null; then
-                ipset add bypass_domains "$DST_IP" -exist
-                echo "[$(date)] Watchdog: Автоматически добавлен IP $DST_IP из неудачного соединения" >> /tmp/route_watchdog.log
-            fi
-        done
-        dmesg -c > /dev/null 2>&1
-    fi
-
-    sleep $INTERVAL
-done
-EOF_WATCHDOG
-
-chmod +x /etc/storage/route_watchdog.sh
-
-# -----------------------------------------------------------------------------
-# 5. Запуск watchdog в автозагрузке (с задержкой)
-# -----------------------------------------------------------------------------
-grep -q "route_watchdog.sh" /etc/storage/started_script.sh || \
-    echo "( sleep 90 && /etc/storage/route_watchdog.sh & ) &" >> /etc/storage/started_script.sh
-
-# -----------------------------------------------------------------------------
-# 6. Настройка ежедневного cron
-# -----------------------------------------------------------------------------
-if [ -d /etc/storage/cron/crontabs ]; then
-    CRON_FILE="/etc/storage/cron/crontabs/admin"
-    grep -q "ipset_update.sh" "$CRON_FILE" 2>/dev/null || \
-        echo "0 4 * * * sh /etc/storage/ipset_update.sh > /tmp/ipset_update_cron.log 2>&1" >> "$CRON_FILE"
-    killall crond 2>/dev/null && crond
-fi
-
-# -----------------------------------------------------------------------------
-# 7. Сохранение и первый запуск
-# -----------------------------------------------------------------------------
-mtd_storage.sh save
-
-echo "=============================================="
-echo "Установка v3.8.1 завершена. Запускаю первый резолв..."
-echo "=============================================="
-sh /etc/storage/ipset_update.sh
