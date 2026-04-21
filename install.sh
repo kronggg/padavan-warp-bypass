@@ -1,15 +1,15 @@
 #!/bin/sh
 # =============================================================================
 #  Установщик системы селективной маршрутизации через AmneziaWG/WARP для Padavan
-#  Версия 3.8.2 (стабильная бета) от 2026-04-22
+#  Версия 3.8.3 (стабильная бета) от 2026-04-22
 #  Включает автоопределение параметров, автообучение, поддержку IPv6, CONNMARK,
-#  блокировку повторного запуска и исправленную проверку свежести кэша.
+#  блокировку повторного запуска, сохранение кэша при обновлении и умное обучение.
 # =============================================================================
 
-echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.8.2 ==="
+echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.8.3 ==="
 
 # -----------------------------------------------------------------------------
-# 1. Создание основного скрипта ipset_update.sh (v3.8.2)
+# 1. Создание основного скрипта ipset_update.sh (v3.8.3)
 # -----------------------------------------------------------------------------
 cat > /etc/storage/ipset_update.sh << 'EOF_SCRIPT'
 #!/bin/sh
@@ -35,6 +35,7 @@ MARK_VALUE="0xca6c"
 
 CACHE_FILE="/etc/storage/ipset_domains.cache"
 IP_CACHE_FILE="/etc/storage/ipset_ips.cache"
+LEARNED_CACHE="/etc/storage/learned_ips.cache"
 LOG_FILE="/tmp/ipset_update.log"
 CACHE_TTL=86400
 PARALLEL=20
@@ -234,6 +235,8 @@ update_domains() {
     rm -f "$tmp"
     log "Доменов: $(wc -l < $CACHE_FILE)"
     resolve_parallel "$CACHE_FILE"
+    # Удаляем устаревший кэш выученных IP
+    find "$LEARNED_CACHE" -mtime +7 -delete 2>/dev/null
 }
 
 # -----------------------------------------------------------------------------
@@ -247,6 +250,16 @@ restore_from_cache() {
         ipset add "$IPSET_NAME" "$ip" -exist 2>/dev/null && count=$((count+1))
     done < "$IP_CACHE_FILE"
     log "Восстановлено из кеша: $count IP"
+
+    # Дополнительно загружаем выученные IP
+    if [ -f "$LEARNED_CACHE" ] && [ -s "$LEARNED_CACHE" ]; then
+        local learned=0
+        while IFS= read -r ip; do
+            [ -z "$ip" ] && continue
+            ipset add "$IPSET_NAME" "$ip" -exist 2>/dev/null && learned=$((learned+1))
+        done < "$LEARNED_CACHE"
+        log "Загружено выученных IP: $learned"
+    fi
 }
 
 # -----------------------------------------------------------------------------
@@ -271,7 +284,7 @@ cache_is_fresh() {
 # -----------------------------------------------------------------------------
 # Главный блок выполнения
 # -----------------------------------------------------------------------------
-log "=== СТАРТ v3.8.2 ==="
+log "=== СТАРТ v3.8.3 ==="
 create_ipset
 if wait_for_vpn; then
     setup_policy_routing
@@ -313,13 +326,21 @@ grep -q "ipset_update.sh" /etc/storage/started_script.sh || \
     echo "( sleep 60 && sh /etc/storage/ipset_update.sh || ( sleep 30 && sh /etc/storage/ipset_update.sh ) ) &" >> /etc/storage/started_script.sh
 
 # -----------------------------------------------------------------------------
-# 4. Создание улучшенного watchdog (v3.8) с автообучением
+# 4. Создание улучшенного watchdog (v3.8.3) с автообучением и сохранением learned IP
 # -----------------------------------------------------------------------------
 cat > /etc/storage/route_watchdog.sh << 'EOF_WATCHDOG'
 #!/bin/sh
 INTERVAL=15
 ANALYZE_INTERVAL=60
 LAST_ANALYZE=0
+DNSMASQ_LOG="/tmp/dnsmasq.log"
+LEARNED_CACHE="/etc/storage/learned_ips.cache"
+
+# Включаем логирование dnsmasq, если ещё не включено
+if ! grep -q "log-facility=$DNSMASQ_LOG" /etc/storage/dnsmasq/dnsmasq.conf; then
+    echo "log-facility=$DNSMASQ_LOG" >> /etc/storage/dnsmasq/dnsmasq.conf
+    kill -HUP $(pidof dnsmasq)
+fi
 
 while true; do
     # 1. Проверка ip rule (без "not")
@@ -382,7 +403,7 @@ while true; do
         fi
     fi
 
-    # 10. АВТООБУЧЕНИЕ: анализ неудачных SYN-пакетов
+    # 10. АВТООБУЧЕНИЕ: анализ неудачных SYN-пакетов и сохранение IP
     NOW=$(date +%s)
     if [ $(( NOW - LAST_ANALYZE )) -ge $ANALYZE_INTERVAL ]; then
         LAST_ANALYZE=$NOW
@@ -391,6 +412,8 @@ while true; do
             if [ -n "$DST_IP" ] && ! ipset test bypass_domains "$DST_IP" 2>/dev/null; then
                 ipset add bypass_domains "$DST_IP" -exist
                 echo "[$(date)] Watchdog: Автоматически добавлен IP $DST_IP из неудачного соединения" >> /tmp/route_watchdog.log
+                # Сохраняем IP в learned кэш для будущих перезагрузок
+                echo "$DST_IP" >> "$LEARNED_CACHE"
             fi
         done
         dmesg -c > /dev/null 2>&1
@@ -419,11 +442,18 @@ if [ -d /etc/storage/cron/crontabs ]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 7. Сохранение и первый запуск
+# 7. Сохранение свежести кэша при обновлении (чтобы избежать полного резолва)
+# -----------------------------------------------------------------------------
+for cache in /etc/storage/ipset_domains.cache /etc/storage/ipset_ips.cache /etc/storage/learned_ips.cache; do
+    [ -f "$cache" ] && touch "$cache"
+done
+
+# -----------------------------------------------------------------------------
+# 8. Сохранение и первый запуск
 # -----------------------------------------------------------------------------
 mtd_storage.sh save
 
 echo "=============================================="
-echo "Установка v3.8.2 завершена. Запускаю первый резолв..."
+echo "Установка v3.8.3 завершена. Запускаю первый резолв..."
 echo "=============================================="
 sh /etc/storage/ipset_update.sh
