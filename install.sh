@@ -267,15 +267,8 @@ restore_from_cache() {
 # -----------------------------------------------------------------------------
 cache_is_fresh() {
     [ -f "$CACHE_FILE" ] || return 1
-    local mtime now age
-    now=$(date +%s)
-    mtime=$(date -r "$CACHE_FILE" +%s 2>/dev/null)
-    if [ -z "$mtime" ]; then
-        mtime=$(ls -l --time-style=+%s "$CACHE_FILE" 2>/dev/null | awk '{print $6}')
-    fi
-    [ -z "$mtime" ] && return 1
-    age=$((now - mtime))
-    [ $age -lt $CACHE_TTL ]
+    # Проверяем, что файл изменялся менее суток назад (работает в BusyBox)
+    find "$CACHE_FILE" -mtime -1 | grep -q "."
 }
 
 # -----------------------------------------------------------------------------
