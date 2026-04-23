@@ -369,6 +369,7 @@ if [ -d /etc/storage/cron/crontabs ]; then
     CRON_FILE="/etc/storage/cron/crontabs/admin"
     grep -q "ipset_update.sh" "$CRON_FILE" 2>/dev/null && sed -i '/ipset_update.sh/d' "$CRON_FILE"
     echo "0 */6 * * * sh /etc/storage/ipset_update.sh > /tmp/ipset_update_cron.log 2>&1" >> "$CRON_FILE"
+    echo "@reboot /etc/storage/route_watchdog.sh &" >> "$CRON_FILE"
     killall crond 2>/dev/null && crond
 fi
 
