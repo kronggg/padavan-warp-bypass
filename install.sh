@@ -262,6 +262,13 @@ else
     log "КРИТИЧЕСКАЯ ОШИБКА: сеть или VPN не готовы, завершаюсь"
     exit 1
 fi
+
+# Гарантированный запуск watchdog после настройки
+if ! ps | grep -v grep | grep -q route_watchdog.sh; then
+    /etc/storage/route_watchdog.sh &
+    log "Watchdog запущен из основного скрипта"
+fi
+
 log "=== КОНЕЦ ==="
 EOF_SCRIPT
 
