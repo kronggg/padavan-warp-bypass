@@ -61,7 +61,7 @@ wait_for_network() {
     log "Ожидаю доступность WAN (макс 120s)..."
     local wan_ok=0
     for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
-        if wget -q --spider http://cp.cloudflare.com 2>/dev/null; then
+        if ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1 || wget -q --spider http://cp.cloudflare.com 2>/dev/null; then
             wan_ok=1
             break
         fi
