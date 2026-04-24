@@ -480,5 +480,7 @@ mtd_storage.sh save
 echo "=============================================="
 echo "Установка v3.10.9-beta завершена. Запускаю первый импорт..."
 echo "=============================================="
-/etc/storage/route_watchdog.sh &
 sh /etc/storage/ipset_update.sh
+
+# Запускаем watchdog сразу после первого импорта
+/etc/storage/route_watchdog.sh &
