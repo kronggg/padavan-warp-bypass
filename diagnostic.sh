@@ -225,13 +225,13 @@ if [ $ERRORS -eq 0 ] && [ $WARNINGS -eq 0 ]; then
 elif [ $ERRORS -eq 0 ]; then
     echo "  Система работает, но есть незначительные предупреждения."
 else
+    echo "  Обнаружены критические ошибки!"
+fi
 
 if [ -n "$RECOMMENDATIONS" ]; then
     echo ""
     echo "  Рекомендации:"
     echo "$RECOMMENDATIONS"
-fi
-    echo "  Обнаружены критические ошибки!"
 fi
 
 echo ""
