@@ -12,6 +12,7 @@ echo ""
 
 ERRORS=0
 WARNINGS=0
+RECOMMENDATIONS=""
 
 # -----------------------------------------------------------------------------
 # 1. Модули ядра
@@ -28,14 +29,8 @@ if lsmod | grep -q ip6_set_hash_net; then
     echo "  [OK] ip6_set_hash_net загружен"
 else
     echo "  [WARN] ip6_set_hash_net НЕ загружен (IPv6 не будет работать)"
-        echo ""
-    echo "  Рекомендации по IPv6:"
-    echo "  - Убедитесь, что ваш провайдер поддерживает IPv6 (уточните в техподдержке)."
-    echo "  - В веб-интерфейсе роутера перейдите: WAN → Протокол IPv6."
-    echo "  - Установите «Тип подключения» = «Native DHCPv6»."
-    echo "  - В разделе «Настройки IPv6 для LAN» включите «Получать IPv6-адрес LAN через DHCPv6 IA-PD»."
-    echo "  - Сохраните настройки и перезагрузите роутер."
-    echo "  - Если провайдер не поддерживает IPv6, данное предупреждение можно игнорировать."
+    RECOMMENDATIONS="${RECOMMENDATIONS}
+  - IPv6: Убедитесь, что провайдер поддерживает IPv6. В веб-интерфейсе роутера (WAN → Протокол IPv6) установите 'Тип подключения' = 'Native DHCPv6'. В разделе 'Настройки IPv6 для LAN' включите 'Получать IPv6-адрес LAN через DHCPv6 IA-PD'. Если провайдер не поддерживает IPv6, предупреждение можно игнорировать."
     WARNINGS=$((WARNINGS+1))
 fi
 if lsmod | grep -q xt_set; then
@@ -230,6 +225,12 @@ if [ $ERRORS -eq 0 ] && [ $WARNINGS -eq 0 ]; then
 elif [ $ERRORS -eq 0 ]; then
     echo "  Система работает, но есть незначительные предупреждения."
 else
+
+if [ -n "$RECOMMENDATIONS" ]; then
+    echo ""
+    echo "  Рекомендации:"
+    echo "$RECOMMENDATIONS"
+fi
     echo "  Обнаружены критические ошибки!"
 fi
 
