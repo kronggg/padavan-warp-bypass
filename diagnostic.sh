@@ -28,6 +28,14 @@ if lsmod | grep -q ip6_set_hash_net; then
     echo "  [OK] ip6_set_hash_net загружен"
 else
     echo "  [WARN] ip6_set_hash_net НЕ загружен (IPv6 не будет работать)"
+        echo ""
+    echo "  Рекомендации по IPv6:"
+    echo "  - Убедитесь, что ваш провайдер поддерживает IPv6 (уточните в техподдержке)."
+    echo "  - В веб-интерфейсе роутера перейдите: WAN → Протокол IPv6."
+    echo "  - Установите «Тип подключения» = «Native DHCPv6»."
+    echo "  - В разделе «Настройки IPv6 для LAN» включите «Получать IPv6-адрес LAN через DHCPv6 IA-PD»."
+    echo "  - Сохраните настройки и перезагрузите роутер."
+    echo "  - Если провайдер не поддерживает IPv6, данное предупреждение можно игнорировать."
     WARNINGS=$((WARNINGS+1))
 fi
 if lsmod | grep -q xt_set; then
