@@ -35,7 +35,11 @@
 
 - curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/install.sh | sh
 
-После завершения (2–3 минуты) роутер можно перезагрузить для проверки автоматического старта: reboot.
+После завершения (2–3 минуты) роутер можно перезагрузить:
+- reboot.
+
+Диагностика системы:
+- curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/diagnostic.sh | sh
 
 ## ✅ Проверка работы
 
