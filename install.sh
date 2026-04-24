@@ -1,7 +1,7 @@
 #!/bin/sh
 # =============================================================================
 #  Установщик системы селективной маршрутизации через AmneziaWG/WARP для Padavan
-#  Версия 3.10.9-beta (финальная, на основе рабочего кода)
+#  Версия 3.10.9-beta (финальная, с поддержкой IPv6)
 # =============================================================================
 
 echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.10.9-beta ==="
@@ -27,12 +27,13 @@ trap 'rm -f "$LOCK_FILE"' EXIT
 # -----------------------------------------------------------------------------
 IPSET_NAME="bypass_nets"
 IPSET_TMP="${IPSET_NAME}_tmp"
+IPSET6_NAME="bypass_nets6"
+IPSET6_TMP="${IPSET6_NAME}_tmp"
 VPN_IFACE="wg0"
 TABLE_ID=51
 MARK_VALUE="0xca6c"
 LOG_FILE="/tmp/ipset_update.log"
 LEARNED_CACHE="/etc/storage/learned_ips.cache"
-DUMP_FILE="/etc/storage/bypass_nets.dump"
 
 CIDR_SOURCES="
 https://raw.githubusercontent.com/you-oops-dev/resolving-public/main/unblock_suite_ip_ipset.txt
@@ -49,7 +50,12 @@ https://raw.githubusercontent.com/lord-alfred/ipranges/main/twitter/ipv4_merged.
 https://raw.githubusercontent.com/lord-alfred/ipranges/main/amazon/ipv4_merged.txt
 https://raw.githubusercontent.com/lord-alfred/ipranges/main/microsoft/ipv4_merged.txt
 "
-
+CIDR6_SOURCES="
+https://raw.githubusercontent.com/lord-alfred/ipranges/main/telegram/ipv6_merged.txt
+https://raw.githubusercontent.com/lord-alfred/ipranges/main/facebook/ipv6_merged.txt
+https://raw.githubusercontent.com/lord-alfred/ipranges/main/google/ipv6_merged.txt
+https://raw.githubusercontent.com/lord-alfred/ipranges/main/cloudflare/ipv6_merged.txt
+"
 MIN_ENTRIES=100
 
 log() { local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $1"; echo "$msg"; echo "$msg" >> "$LOG_FILE"; }
@@ -149,6 +155,19 @@ setup_iptables() {
     iptables -t mangle -A PREROUTING -m connmark --mark "$MARK_VALUE" -j CONNMARK --restore-mark
 
     log "Правила iptables для $IPSET_NAME добавлены"
+	
+    # IPv6
+    modprobe ip6_set 2>/dev/null
+    modprobe ip6_set_hash_net 2>/dev/null
+    if ! ipset list "$IPSET6_NAME" >/dev/null 2>&1; then
+        ipset create "$IPSET6_NAME" hash:net family inet6 maxelem 50000 2>/dev/null
+    fi
+    ip6tables -t mangle -D PREROUTING -m set --match-set "$IPSET6_NAME" dst -j MARK --set-mark "$MARK_VALUE" 2>/dev/null
+    ip6tables -t mangle -D PREROUTING -m set --match-set "$IPSET6_NAME" dst -j CONNMARK --set-mark "$MARK_VALUE" 2>/dev/null
+    ip6tables -t mangle -A PREROUTING -m set --match-set "$IPSET6_NAME" dst -j MARK --set-mark "$MARK_VALUE"
+    ip6tables -t mangle -A PREROUTING -m set --match-set "$IPSET6_NAME" dst -j CONNMARK --set-mark "$MARK_VALUE"
+	
+    log "Правила ip6tables для $IPSET6_NAME добавлены"
 }
 
 # -----------------------------------------------------------------------------
@@ -207,6 +226,44 @@ update_ipset() {
 }
 
 # -----------------------------------------------------------------------------
+# Обновление ipset6 из IPv6 CIDR-списков
+# -----------------------------------------------------------------------------
+update_ipset6() {
+    log "=== ОБНОВЛЕНИЕ IPv6 IPSET ==="
+    local tmp6="/tmp/cidr6_raw.txt"
+    > "$tmp6"
+    for url in $CIDR6_SOURCES; do
+        [ -z "$url" ] && continue
+        log "Скачиваю IPv6: $url"
+        wget -q -O - "$url" 2>/dev/null >> "$tmp6"
+    done
+    local tmp6_clean="/tmp/cidr6_clean.txt"
+    > "$tmp6_clean"
+    grep -E '^[0-9a-f:]+/[0-9]+$' "$tmp6" 2>/dev/null | sort -u > "$tmp6_clean"
+    local count6=$(wc -l < "$tmp6_clean" 2>/dev/null)
+    [ -z "$count6" ] && count6=0
+    log "Найдено уникальных IPv6 подсетей: $count6"
+
+    if [ "$count6" -gt 0 ]; then
+        ipset create "$IPSET6_TMP" hash:net family inet6 maxelem 50000 2>/dev/null
+        if [ $? -eq 0 ]; then
+            while read cidr6; do
+                [ -z "$cidr6" ] && continue
+                ipset add "$IPSET6_TMP" "$cidr6" -exist 2>/dev/null
+            done < "$tmp6_clean"
+            ipset swap "$IPSET6_NAME" "$IPSET6_TMP" 2>/dev/null || {
+                ipset destroy "$IPSET6_NAME" 2>/dev/null
+                ipset rename "$IPSET6_TMP" "$IPSET6_NAME"
+            }
+            ipset destroy "$IPSET6_TMP" 2>/dev/null
+        fi
+    fi
+    cp "$tmp6_clean" /etc/storage/bypass_nets6.cidr 2>/dev/null
+    rm -f "$tmp6" "$tmp6_clean"
+    log "IPv6 обновление завершено"
+}
+
+# -----------------------------------------------------------------------------
 # Восстановление выученных IP
 # -----------------------------------------------------------------------------
 restore_learned() {
@@ -233,7 +290,6 @@ if wait_for_network; then
         if [ "$cidr_count" -ge "$MIN_ENTRIES" ]; then
             modprobe ip_set_hash_net 2>/dev/null
             log "Быстрое восстановление ipset из CIDR-списка ($cidr_count подсетей)..."
-            # Подготавливаем файл для ipset restore
             {
                 echo "create $IPSET_TMP hash:net maxelem 100000"
                 sed "s/^/add $IPSET_TMP /" /etc/storage/bypass_nets.cidr
@@ -257,45 +313,53 @@ if wait_for_network; then
         update_ipset
     fi
 
+    # Быстрое восстановление IPv6 из CIDR-файла
+    if [ -f /etc/storage/bypass_nets6.cidr ]; then
+        cidr6_count=$(wc -l < /etc/storage/bypass_nets6.cidr 2>/dev/null)
+        if [ "$cidr6_count" -gt 0 ]; then
+            modprobe ip6_set_hash_net 2>/dev/null
+            log "Быстрое восстановление ipset6 из CIDR-списка ($cidr6_count подсетей)..."
+            {
+                echo "create $IPSET6_TMP hash:net family inet6 maxelem 50000"
+                sed "s/^/add $IPSET6_TMP /" /etc/storage/bypass_nets6.cidr
+            } | ipset restore 2>/dev/null
+            if [ $? -eq 0 ]; then
+                ipset swap "$IPSET6_NAME" "$IPSET6_TMP" 2>/dev/null || {
+                    ipset destroy "$IPSET6_NAME" 2>/dev/null
+                    ipset rename "$IPSET6_TMP" "$IPSET6_NAME"
+                }
+                ipset destroy "$IPSET6_TMP" 2>/dev/null
+                log "ipset6 восстановлен"
+            fi
+        fi
+    fi
+
+    # Если ipset6 всё ещё пуст — загружаем подсети
+    entries6=$(ipset list "$IPSET6_NAME" 2>/dev/null | grep -oE 'Number of entries: [0-9]+' | awk '{print $4}')
+    if [ -z "$entries6" ] || [ "$entries6" -lt 10 ]; then
+        log "ipset6 содержит $entries6 записей, запускаю обновление IPv6"
+        update_ipset6
+    fi
+
     restore_learned
 else
     log "КРИТИЧЕСКАЯ ОШИБКА: сеть или VPN не готовы, завершаюсь"
     exit 1
 fi
-
-# Гарантированный запуск watchdog после настройки
-if ! ps | grep -v grep | grep -q route_watchdog.sh; then
-    /etc/storage/route_watchdog.sh &
-    log "Watchdog запущен из основного скрипта"
-fi
-
 log "=== КОНЕЦ ==="
 EOF_SCRIPT
 
 chmod +x /etc/storage/ipset_update.sh
 
 # -----------------------------------------------------------------------------
-# 2. Настройка автозагрузки
-# -----------------------------------------------------------------------------
-cat > /etc/storage/started_script.sh << 'EOF_STARTED'
-#!/bin/sh
-
-modprobe ip_set_hash_net
-modprobe xt_set
-
-( sleep 60 && sh /etc/storage/ipset_update.sh ) &
-( sleep 90 && /etc/storage/route_watchdog.sh & ) &
-EOF_STARTED
-
-chmod +x /etc/storage/started_script.sh
-
-# -----------------------------------------------------------------------------
-# 3. Watchdog (с автообучением)
+# 2. Создание watchdog (с поддержкой IPv6)
 # -----------------------------------------------------------------------------
 cat > /etc/storage/route_watchdog.sh << 'EOF_WATCHDOG'
 #!/bin/sh
 modprobe ip_set_hash_net 2>/dev/null
 modprobe xt_set 2>/dev/null
+modprobe ip6_set 2>/dev/null
+modprobe ip6_set_hash_net 2>/dev/null
 
 INTERVAL=15
 ANALYZE_INTERVAL=60
@@ -334,6 +398,25 @@ while true; do
         echo "[$(date)] Watchdog: добавлено правило CONNMARK restore" >> /tmp/route_watchdog.log
     fi
 
+    # Создание ipset6, если его ещё нет
+    if ! ipset list bypass_nets6 >/dev/null 2>&1; then
+        modprobe ip6_set_hash_net 2>/dev/null
+        ipset create bypass_nets6 hash:net family inet6 maxelem 50000 2>/dev/null
+        echo "[$(date)] Watchdog: создан ipset6 bypass_nets6" >> /tmp/route_watchdog.log
+    fi
+
+    # Проверка ip6tables MARK для IPv6
+    if ! ip6tables -t mangle -C PREROUTING -m set --match-set bypass_nets6 dst -j MARK --set-mark 0xca6c 2>/dev/null; then
+        ip6tables -t mangle -A PREROUTING -m set --match-set bypass_nets6 dst -j MARK --set-mark 0xca6c
+        echo "[$(date)] Watchdog: добавлено правило ip6tables MARK" >> /tmp/route_watchdog.log
+    fi
+
+    # Проверка ip6tables CONNMARK для IPv6
+    if ! ip6tables -t mangle -C PREROUTING -m set --match-set bypass_nets6 dst -j CONNMARK --set-mark 0xca6c 2>/dev/null; then
+        ip6tables -t mangle -A PREROUTING -m set --match-set bypass_nets6 dst -j CONNMARK --set-mark 0xca6c
+        echo "[$(date)] Watchdog: добавлено правило ip6tables CONNMARK" >> /tmp/route_watchdog.log
+    fi
+
     ENTRIES=$(ipset list bypass_nets 2>/dev/null | grep -oE 'Number of entries: [0-9]+' | awk '{print $4}')
     if [ -n "$ENTRIES" ] && [ "$ENTRIES" -lt 100 ]; then
         if [ ! -f /tmp/ipset_update.lock ]; then
@@ -363,13 +446,28 @@ EOF_WATCHDOG
 chmod +x /etc/storage/route_watchdog.sh
 
 # -----------------------------------------------------------------------------
+# 3. Настройка автозагрузки
+# -----------------------------------------------------------------------------
+cat > /etc/storage/started_script.sh << 'EOF_STARTED'
+#!/bin/sh
+
+modprobe ip_set_hash_net
+modprobe xt_set
+modprobe ip6_set_hash_net
+
+( sleep 60 && sh /etc/storage/ipset_update.sh ) &
+( sleep 90 && /etc/storage/route_watchdog.sh & ) &
+EOF_STARTED
+
+chmod +x /etc/storage/started_script.sh
+
+# -----------------------------------------------------------------------------
 # 4. Cron (каждые 6 часов)
 # -----------------------------------------------------------------------------
 if [ -d /etc/storage/cron/crontabs ]; then
     CRON_FILE="/etc/storage/cron/crontabs/admin"
     grep -q "ipset_update.sh" "$CRON_FILE" 2>/dev/null && sed -i '/ipset_update.sh/d' "$CRON_FILE"
     echo "0 */6 * * * sh /etc/storage/ipset_update.sh > /tmp/ipset_update_cron.log 2>&1" >> "$CRON_FILE"
-    echo "@reboot /etc/storage/route_watchdog.sh &" >> "$CRON_FILE"
     killall crond 2>/dev/null && crond
 fi
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 # =============================================================================
 #  Скрипт полного удаления системы селективной маршрутизации
-#  Версия 1.2 от 2026-04-23 (соответствует v3.10.9-beta)
+#  Версия 1.3 от 2026-04-24 (соответствует v3.10.9-beta, удаляет IPv6-компоненты)
 # =============================================================================
 
 echo "=== Полное удаление системы селективной маршрутизации ==="
@@ -15,9 +15,11 @@ rm -f /etc/storage/ipset_update.sh
 rm -f /etc/storage/route_watchdog.sh
 rm -f /etc/storage/diagnostic.sh
 
-# Удаляем CIDR-список и кэши
+# Удаляем CIDR-файлы и кэши
 rm -f /etc/storage/bypass_nets.cidr
+rm -f /etc/storage/bypass_nets6.cidr
 rm -f /etc/storage/learned_ips.cache
+rm -f /etc/storage/bypass_nets.dump
 rm -f /tmp/ipset_update.lock
 
 # Очищаем логи
@@ -31,19 +33,22 @@ if [ -f /etc/storage/cron/crontabs/admin ]; then
     killall crond 2>/dev/null && crond
 fi
 
-# Удаляем правила iptables (IPv4 и IPv6)
+# Удаляем правила iptables (IPv4)
 iptables -t mangle -D PREROUTING -m set --match-set bypass_nets dst -j MARK --set-mark 0xca6c 2>/dev/null
 iptables -t mangle -D PREROUTING -m set --match-set bypass_nets dst -j CONNMARK --set-mark 0xca6c 2>/dev/null
 iptables -t mangle -D PREROUTING -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null
-ip6tables -t mangle -D PREROUTING -m set --match-set bypass_nets6 dst -j MARK --set-mark 0xca6c 2>/dev/null
 
-# Удаляем policy routing
+# Удаляем правила ip6tables (IPv6)
+ip6tables -t mangle -D PREROUTING -m set --match-set bypass_nets6 dst -j MARK --set-mark 0xca6c 2>/dev/null
+ip6tables -t mangle -D PREROUTING -m set --match-set bypass_nets6 dst -j CONNMARK --set-mark 0xca6c 2>/dev/null
+
+# Удаляем policy routing (IPv4 и IPv6)
 ip rule del pref 5182 2>/dev/null
 ip route flush table 51 2>/dev/null
 ip -6 rule del pref 5182 2>/dev/null
 ip -6 route flush table 51 2>/dev/null
 
-# Уничтожаем ipset
+# Уничтожаем ipset (IPv4 и IPv6)
 ipset destroy bypass_nets 2>/dev/null
 ipset destroy bypass_nets6 2>/dev/null
 
@@ -56,7 +61,7 @@ if [ -f /etc/storage/started_script.sh ]; then
     sed -i '/route_watchdog.sh/d' /etc/storage/started_script.sh
 fi
 
-# Восстанавливаем стандартный маршрут по умолчанию через WAN
+# Восстанавливаем стандартный маршрут через WAN
 DEFAULT_GW=$(nvram get wan_gateway)
 WAN_IF=$(nvram get wan_ifname)
 [ -z "$WAN_IF" ] && WAN_IF="eth3"
