@@ -1,6 +1,8 @@
+cat > /etc/storage/diagnostic.sh << 'EOF'
 #!/bin/sh
 # =============================================================================
 #  Диагностика системы селективной маршрутизации v3.10+ (с IPv6)
+#  Версия с улучшенной проверкой модуля ip6_set_hash_net
 # =============================================================================
 
 echo ""
@@ -22,12 +24,23 @@ else
     echo "  [FAIL] ip_set_hash_net НЕ загружен"
     ERRORS=$((ERRORS+1))
 fi
+
 if lsmod | grep -q ip6_set_hash_net; then
     echo "  [OK] ip6_set_hash_net загружен"
 else
-    echo "  [WARN] ip6_set_hash_net НЕ загружен (IPv6 не будет работать)"
-    WARNINGS=$((WARNINGS+1))
+    modprobe ip6_set_hash_net 2>/dev/null
+    if lsmod | grep -q ip6_set_hash_net; then
+        echo "  [OK] ip6_set_hash_net загружен (был загружен автоматически)"
+    else
+        if find /lib/modules -name "ip6_set_hash_net.ko" 2>/dev/null | grep -q .; then
+            echo "  [WARN] ip6_set_hash_net НЕ загружен (модуль найден, но не загрузился)"
+        else
+            echo "  [WARN] ip6_set_hash_net отсутствует в прошивке (IPv6-маршрутизация не будет работать)"
+        fi
+        WARNINGS=$((WARNINGS+1))
+    fi
 fi
+
 if lsmod | grep -q xt_set; then
     echo "  [OK] xt_set загружен"
 else
@@ -162,7 +175,7 @@ fi
 # 6. Watchdog
 # -----------------------------------------------------------------------------
 echo "--- 6. Watchdog ---"
-if ps | grep -v grep | grep -q route_watchdog.sh; then
+if ps | grep -q '[r]oute_watchdog'; then
     echo "  [OK] Процесс watchdog запущен"
 else
     echo "  [FAIL] Процесс watchdog НЕ ЗАПУЩЕН"
@@ -226,3 +239,4 @@ fi
 echo ""
 echo "=============================================="
 echo "Диагностика завершена."
+EOF
