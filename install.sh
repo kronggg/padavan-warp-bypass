@@ -125,6 +125,7 @@ setup_policy_routing() {
     ip rule add fwmark "$MARK_VALUE" lookup "$TABLE_ID" pref 5182
     ip route flush table "$TABLE_ID"
     ip route add default dev "$VPN_IFACE" table "$TABLE_ID"
+    # Отключаем rp_filter для VPN-интерфейса (необходимо для обратного трафика)
     echo 0 > /proc/sys/net/ipv4/conf/"$VPN_IFACE"/rp_filter 2>/dev/null
     ip -6 rule del pref 5182 2>/dev/null
     ip -6 rule add fwmark "$MARK_VALUE" lookup "$TABLE_ID" pref 5182
@@ -349,6 +350,9 @@ fi
 log "=== КОНЕЦ ==="
 EOF_SCRIPT
 
+# -----------------------------------------------------------------------------
+# 2. Права на выполнение основного скрипта
+# -----------------------------------------------------------------------------
 chmod +x /etc/storage/ipset_update.sh
 
 # -----------------------------------------------------------------------------
@@ -477,6 +481,7 @@ fi
 # -----------------------------------------------------------------------------
 mtd_storage.sh save
 
+echo ""
 echo "=============================================="
 echo "Установка v3.10.9-beta завершена. Запускаю первый импорт..."
 echo "=============================================="
