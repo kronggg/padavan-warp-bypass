@@ -1,6 +1,6 @@
 # 🚀 Селективная маршрутизация через AmneziaWG + WARP на Padavan
 
-![Версия](https://img.shields.io/badge/version-3.10.9--beta-blue)
+![Версия](https://img.shields.io/badge/version-3.10.9--stable-blue)
 ![Платформа](https://img.shields.io/badge/platform-Padavan-orange)
 ![Лицензия](https://img.shields.io/badge/license-MIT-green)
 
