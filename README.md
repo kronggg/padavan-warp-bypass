@@ -33,13 +33,13 @@
 
 Подключитесь к роутеру по SSH и выполните:
 
-- curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/install.sh | sh
+- curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/install.sh | sh
 
 После завершения (2–3 минуты) роутер можно перезагрузить:
 - reboot.
 
 Диагностика системы:
-- curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/diagnostic.sh | sh
+- curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/diagnostic.sh | sh
 
 ## ✅ Проверка работы
 
@@ -95,7 +95,7 @@ Cron: каждые 6 часов полное обновление списков
 
 ## 🗑 Удаление
 
-- curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/uninstall.sh | sh
+- curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/uninstall.sh | sh
 
 После выполнения роутер автоматически перезагрузится и вернётся к стандартной маршрутизации.
 
