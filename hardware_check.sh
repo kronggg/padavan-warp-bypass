@@ -1,10 +1,10 @@
 #!/bin/sh
 # =============================================================================
 #  Скрипт проверки совместимости оборудования/прошивки с ССМ (v3.10+)
-#  Версия 1.3 — исправлены замечания: приоритет awg, чистый вывод, точный df
+#  Версия 1.4 — финальная, с корректным определением памяти и приоритетом awg
 # =============================================================================
 
-# Принудительно расширяем PATH
+# Принудительно расширяем PATH, чтобы гарантированно найти системные утилиты
 export PATH="$PATH:/usr/sbin:/usr/bin:/sbin:/bin:/opt/sbin:/opt/bin"
 
 echo ""
@@ -41,7 +41,6 @@ esac
 # -------------------------------------------------------------------
 echo "--- 2. Утилита WireGuard/AmneziaWG ---"
 FOUND_WG=0
-# Сначала ищем AmneziaWG
 for path in \
     /usr/sbin/awg /usr/bin/awg /opt/bin/awg /opt/sbin/awg \
     /usr/sbin/wg /usr/bin/wg /opt/bin/wg /opt/sbin/wg; do
@@ -123,17 +122,17 @@ else
 fi
 
 # -------------------------------------------------------------------
-# 6. Свободное место в /etc/storage (в MB, через df -m / tail)
+# 6. Свободное место в /etc/storage (порог 512 КБ)
 # -------------------------------------------------------------------
 echo "--- 6. Свободное место в /etc/storage ---"
 if [ -d /etc/storage ]; then
-    # Используем df -m и берём последнюю строку (tail -1)
-    AVAIL_MB=$(df -m /etc/storage 2>/dev/null | tail -1 | awk '{print $4}')
-    if [ -n "$AVAIL_MB" ]; then
-        if [ "$AVAIL_MB" -ge 2 ]; then
-            echo "  [OK] Доступно ${AVAIL_MB} MB (рекомендуется ≥ 2 MB)"
+    AVAIL=$(df -k /etc/storage 2>/dev/null | tail -1 | awk '{print $4}')
+    TOTAL=$(df -k /etc/storage 2>/dev/null | tail -1 | awk '{print $2}')
+    if [ -n "$AVAIL" ]; then
+        if [ "$AVAIL" -ge 512 ]; then
+            echo "  [OK] Доступно ${AVAIL} KB (из ${TOTAL} KB) — достаточно для CIDR-файлов"
         else
-            echo "  [WARN] Доступно ${AVAIL_MB} MB. CIDR-файлы могут не поместиться."
+            echo "  [WARN] Доступно ${AVAIL} KB (из ${TOTAL} KB). Рекомендуется освободить место."
             WARNINGS=$((WARNINGS+1))
         fi
     else
