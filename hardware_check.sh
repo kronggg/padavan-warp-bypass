@@ -1,8 +1,7 @@
 #!/bin/sh
 # =============================================================================
 #  Скрипт проверки совместимости оборудования/прошивки с ССМ (v3.10+)
-#  Использование:
-#    curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/main/hardware_check.sh | sh
+#  Версия 1.1 — исправлены ложные срабатывания для BusyBox
 # =============================================================================
 
 echo ""
@@ -15,13 +14,13 @@ ERRORS=0
 WARNINGS=0
 
 # -------------------------------------------------------------------
-# 1. Версия ядра (желательно ≥ 4.4, но 3.4 тоже допустимо)
+# 1. Версия ядра
 # -------------------------------------------------------------------
 echo "--- 1. Версия ядра ---"
 KERNEL_VER=$(uname -r)
 echo "  Обнаружена версия: $KERNEL_VER"
 case "$KERNEL_VER" in
-    4.[4-9]*|4.[1-9][0-9]*|[5-9]*|[1-9][0-9]*) 
+    4.[4-9]*|4.[1-9][0-9]*|[5-9]*|[1-9][0-9]*)
         echo "  [OK] Ядро $KERNEL_VER полностью совместимо"
         ;;
     3.4*)
@@ -35,12 +34,18 @@ case "$KERNEL_VER" in
 esac
 
 # -------------------------------------------------------------------
-# 2. Наличие утилиты wg или awg
+# 2. Наличие утилиты wg или awg (проверка по абсолютным путям)
 # -------------------------------------------------------------------
 echo "--- 2. Утилита WireGuard/AmneziaWG ---"
-if command -v wg >/dev/null 2>&1 || command -v awg >/dev/null 2>&1; then
-    echo "  [OK] Найдена утилита wg/awg"
-else
+FOUND_WG=0
+for path in /usr/sbin/wg /usr/bin/wg /opt/bin/wg /usr/sbin/awg /usr/bin/awg /opt/bin/awg; do
+    if [ -x "$path" ]; then
+        FOUND_WG=1
+        echo "  [OK] Найдена утилита: $path"
+        break
+    fi
+done
+if [ $FOUND_WG -eq 0 ]; then
     echo "  [FAIL] Ни wg, ни awg не найдены. VPN-туннель не сможет работать."
     ERRORS=$((ERRORS+1))
 fi
@@ -49,10 +54,15 @@ fi
 # 3. Наличие ipset
 # -------------------------------------------------------------------
 echo "--- 3. ipset ---"
-if command -v ipset >/dev/null 2>&1; then
-    IPSET_VER=$(ipset --version 2>/dev/null | head -1)
-    echo "  [OK] ipset найден: $IPSET_VER"
-else
+FOUND_IPSET=0
+for path in /usr/sbin/ipset /usr/bin/ipset /opt/sbin/ipset; do
+    if [ -x "$path" ]; then
+        FOUND_IPSET=1
+        echo "  [OK] ipset найден: $path"
+        break
+    fi
+done
+if [ $FOUND_IPSET -eq 0 ]; then
     echo "  [FAIL] ipset не найден. Селективная маршрутизация невозможна."
     ERRORS=$((ERRORS+1))
 fi
@@ -61,9 +71,15 @@ fi
 # 4. Наличие iptables
 # -------------------------------------------------------------------
 echo "--- 4. iptables ---"
-if command -v iptables >/dev/null 2>&1; then
-    echo "  [OK] iptables найден"
-else
+FOUND_IPT=0
+for path in /usr/sbin/iptables /usr/bin/iptables /opt/sbin/iptables; do
+    if [ -x "$path" ]; then
+        FOUND_IPT=1
+        echo "  [OK] iptables найден: $path"
+        break
+    fi
+done
+if [ $FOUND_IPT -eq 0 ]; then
     echo "  [FAIL] iptables не найден. Правила маркировки трафика не будут работать."
     ERRORS=$((ERRORS+1))
 fi
@@ -72,24 +88,32 @@ fi
 # 5. Наличие wget или curl
 # -------------------------------------------------------------------
 echo "--- 5. wget/curl ---"
-if command -v wget >/dev/null 2>&1 || command -v curl >/dev/null 2>&1; then
-    echo "  [OK] Найдена утилита для скачивания (wget или curl)"
-else
+FOUND_DL=0
+for path in /usr/bin/wget /usr/sbin/wget /opt/bin/wget /usr/bin/curl /usr/sbin/curl /opt/bin/curl; do
+    if [ -x "$path" ]; then
+        FOUND_DL=1
+        echo "  [OK] Найдена утилита для скачивания: $path"
+        break
+    fi
+done
+if [ $FOUND_DL -eq 0 ]; then
     echo "  [FAIL] Ни wget, ни curl не найдены. Не сможем скачивать CIDR-списки."
     ERRORS=$((ERRORS+1))
 fi
 
 # -------------------------------------------------------------------
-# 6. Свободное место в /etc/storage
+# 6. Свободное место в /etc/storage (BusyBox-совместимо)
 # -------------------------------------------------------------------
 echo "--- 6. Свободное место в /etc/storage ---"
 if [ -d /etc/storage ]; then
-    AVAIL=$(df -k /etc/storage 2>/dev/null | awk 'NR==2 {print $4}')
+    # Пробуем получить размер в KB через awk (работает в BusyBox)
+    AVAIL=$(df /etc/storage 2>/dev/null | awk 'NR==2 {print $4}')
     if [ -n "$AVAIL" ]; then
-        if [ "$AVAIL" -ge 5120 ]; then
-            echo "  [OK] Доступно ${AVAIL} KB (рекомендуется ≥ 5 MB)"
+        AVAIL_KB=$(( AVAIL ))
+        if [ "$AVAIL_KB" -ge 5120 ]; then
+            echo "  [OK] Доступно ${AVAIL_KB} KB"
         else
-            echo "  [WARN] Доступно всего ${AVAIL} KB. CIDR-файлы могут не поместиться."
+            echo "  [WARN] Доступно ${AVAIL_KB} KB. CIDR-файлы могут не поместиться."
             WARNINGS=$((WARNINGS+1))
         fi
     else
@@ -108,7 +132,7 @@ echo "--- 7. Архитектура процессора ---"
 ARCH=$(uname -m)
 echo "  Обнаружена архитектура: $ARCH"
 case "$ARCH" in
-    mips|armv7l|aarch64) 
+    mips|armv7l|aarch64)
         echo "  [OK] Архитектура $ARCH поддерживается"
         ;;
     *)
@@ -118,7 +142,7 @@ case "$ARCH" in
 esac
 
 # -------------------------------------------------------------------
-# 8. Доступность GitHub (raw.githubusercontent.com)
+# 8. Доступность GitHub
 # -------------------------------------------------------------------
 echo "--- 8. Доступность GitHub ---"
 if ping -c 1 -W 1 raw.githubusercontent.com >/dev/null 2>&1; then
