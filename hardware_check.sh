@@ -1,8 +1,11 @@
 #!/bin/sh
 # =============================================================================
 #  Скрипт проверки совместимости оборудования/прошивки с ССМ (v3.10+)
-#  Версия 1.1 — исправлены ложные срабатывания для BusyBox
+#  Версия 1.2 — расширенный поиск утилит, устойчив к ограниченному PATH
 # =============================================================================
+
+# Принудительно расширяем PATH, чтобы гарантированно найти системные утилиты
+export PATH="$PATH:/usr/sbin:/usr/bin:/sbin:/bin:/opt/sbin:/opt/bin"
 
 echo ""
 echo "=============================================="
@@ -34,11 +37,13 @@ case "$KERNEL_VER" in
 esac
 
 # -------------------------------------------------------------------
-# 2. Наличие утилиты wg или awg (проверка по абсолютным путям)
+# 2. Утилита WireGuard/AmneziaWG (ищем во всех возможных местах)
 # -------------------------------------------------------------------
 echo "--- 2. Утилита WireGuard/AmneziaWG ---"
 FOUND_WG=0
-for path in /usr/sbin/wg /usr/bin/wg /opt/bin/wg /usr/sbin/awg /usr/bin/awg /opt/bin/awg; do
+for path in \
+    /usr/sbin/wg /usr/bin/wg /opt/bin/wg /opt/sbin/wg \
+    /usr/sbin/awg /usr/bin/awg /opt/bin/awg /opt/sbin/awg; do
     if [ -x "$path" ]; then
         FOUND_WG=1
         echo "  [OK] Найдена утилита: $path"
@@ -46,16 +51,22 @@ for path in /usr/sbin/wg /usr/bin/wg /opt/bin/wg /usr/sbin/awg /usr/bin/awg /opt
     fi
 done
 if [ $FOUND_WG -eq 0 ]; then
-    echo "  [FAIL] Ни wg, ни awg не найдены. VPN-туннель не сможет работать."
-    ERRORS=$((ERRORS+1))
+    # На худой конец пробуем найти через `which`
+    if which wg >/dev/null 2>&1 || which awg >/dev/null 2>&1; then
+        FOUND_WG=1
+        echo "  [OK] Утилита wg/awg найдена через PATH"
+    else
+        echo "  [FAIL] Ни wg, ни awg не найдены. VPN-туннель не сможет работать."
+        ERRORS=$((ERRORS+1))
+    fi
 fi
 
 # -------------------------------------------------------------------
-# 3. Наличие ipset
+# 3. ipset
 # -------------------------------------------------------------------
 echo "--- 3. ipset ---"
 FOUND_IPSET=0
-for path in /usr/sbin/ipset /usr/bin/ipset /opt/sbin/ipset; do
+for path in /usr/sbin/ipset /usr/bin/ipset /opt/sbin/ipset /opt/bin/ipset; do
     if [ -x "$path" ]; then
         FOUND_IPSET=1
         echo "  [OK] ipset найден: $path"
@@ -63,16 +74,21 @@ for path in /usr/sbin/ipset /usr/bin/ipset /opt/sbin/ipset; do
     fi
 done
 if [ $FOUND_IPSET -eq 0 ]; then
-    echo "  [FAIL] ipset не найден. Селективная маршрутизация невозможна."
-    ERRORS=$((ERRORS+1))
+    if which ipset >/dev/null 2>&1; then
+        FOUND_IPSET=1
+        echo "  [OK] ipset найден через PATH"
+    else
+        echo "  [FAIL] ipset не найден. Селективная маршрутизация невозможна."
+        ERRORS=$((ERRORS+1))
+    fi
 fi
 
 # -------------------------------------------------------------------
-# 4. Наличие iptables
+# 4. iptables
 # -------------------------------------------------------------------
 echo "--- 4. iptables ---"
 FOUND_IPT=0
-for path in /usr/sbin/iptables /usr/bin/iptables /opt/sbin/iptables; do
+for path in /usr/sbin/iptables /usr/bin/iptables /opt/sbin/iptables /opt/bin/iptables; do
     if [ -x "$path" ]; then
         FOUND_IPT=1
         echo "  [OK] iptables найден: $path"
@@ -80,12 +96,17 @@ for path in /usr/sbin/iptables /usr/bin/iptables /opt/sbin/iptables; do
     fi
 done
 if [ $FOUND_IPT -eq 0 ]; then
-    echo "  [FAIL] iptables не найден. Правила маркировки трафика не будут работать."
-    ERRORS=$((ERRORS+1))
+    if which iptables >/dev/null 2>&1; then
+        FOUND_IPT=1
+        echo "  [OK] iptables найден через PATH"
+    else
+        echo "  [FAIL] iptables не найден. Правила маркировки трафика не будут работать."
+        ERRORS=$((ERRORS+1))
+    fi
 fi
 
 # -------------------------------------------------------------------
-# 5. Наличие wget или curl
+# 5. wget или curl
 # -------------------------------------------------------------------
 echo "--- 5. wget/curl ---"
 FOUND_DL=0
@@ -97,23 +118,26 @@ for path in /usr/bin/wget /usr/sbin/wget /opt/bin/wget /usr/bin/curl /usr/sbin/c
     fi
 done
 if [ $FOUND_DL -eq 0 ]; then
-    echo "  [FAIL] Ни wget, ни curl не найдены. Не сможем скачивать CIDR-списки."
-    ERRORS=$((ERRORS+1))
+    if which wget >/dev/null 2>&1 || which curl >/dev/null 2>&1; then
+        FOUND_DL=1
+        echo "  [OK] Утилита для скачивания найдена через PATH"
+    else
+        echo "  [FAIL] Ни wget, ни curl не найдены. Не сможем скачивать CIDR-списки."
+        ERRORS=$((ERRORS+1))
+    fi
 fi
 
 # -------------------------------------------------------------------
-# 6. Свободное место в /etc/storage (BusyBox-совместимо)
+# 6. Свободное место в /etc/storage
 # -------------------------------------------------------------------
 echo "--- 6. Свободное место в /etc/storage ---"
 if [ -d /etc/storage ]; then
-    # Пробуем получить размер в KB через awk (работает в BusyBox)
-    AVAIL=$(df /etc/storage 2>/dev/null | awk 'NR==2 {print $4}')
+    AVAIL=$(df -k /etc/storage 2>/dev/null | awk 'NR==2 {print $4}')
     if [ -n "$AVAIL" ]; then
-        AVAIL_KB=$(( AVAIL ))
-        if [ "$AVAIL_KB" -ge 5120 ]; then
-            echo "  [OK] Доступно ${AVAIL_KB} KB"
+        if [ "$AVAIL" -ge 5120 ]; then
+            echo "  [OK] Доступно ${AVAIL} KB (рекомендуется ≥ 5 MB)"
         else
-            echo "  [WARN] Доступно ${AVAIL_KB} KB. CIDR-файлы могут не поместиться."
+            echo "  [WARN] Доступно ${AVAIL} KB. CIDR-файлы могут не поместиться."
             WARNINGS=$((WARNINGS+1))
         fi
     else
