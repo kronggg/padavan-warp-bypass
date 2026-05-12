@@ -31,8 +31,8 @@ for path in \
     if [ -x "$path" ]; then
         FOUND_WG=1
         case "$path" in
-            *awg) echo "  [OK] Найден AmneziaWG: $path" ;;
-            *wg)  echo "  [OK] Найден WireGuard: $path" ;;
+            *awg) echo "  [OK] AmneziaWG найден" ;;
+            *wg)  echo "  [OK] WireGuard найден" ;;
         esac
         break
     fi
