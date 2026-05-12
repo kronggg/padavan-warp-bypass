@@ -3,7 +3,7 @@
 #  Скрипт проверки совместимости оборудования/прошивки с ССМ (v3.10+)
 # =============================================================================
 
-# Принудительно расширяем PATH, чтобы гарантированно найти системные утилиты
+# Принудительно расширяем PATH
 export PATH="$PATH:/usr/sbin:/usr/bin:/sbin:/bin:/opt/sbin:/opt/bin"
 
 echo ""
@@ -16,18 +16,48 @@ ERRORS=0
 WARNINGS=0
 
 # -------------------------------------------------------------------
-# 1. Версия ядра
+# 1. Версия ядра + поиск утилиты AWG/WG
 # -------------------------------------------------------------------
-echo "--- 1. Версия ядра ---"
+echo "--- 1. Ядро и VPN-утилита ---"
 KERNEL_VER=$(uname -r)
-echo "  Обнаружена версия: $KERNEL_VER"
+echo "  Версия ядра: $KERNEL_VER"
+
+# Сначала ищем AWG, потом WG
+FOUND_WG=0
+for path in \
+    /usr/sbin/awg /usr/bin/awg /opt/bin/awg /opt/sbin/awg \
+    /usr/sbin/wg /usr/bin/wg /opt/bin/wg /opt/sbin/wg; do
+    if [ -x "$path" ]; then
+        FOUND_WG=1
+        case "$path" in
+            *awg) echo "  [OK] AmneziaWG найден" ;;
+            *wg)  echo "  [OK] WireGuard найден" ;;
+        esac
+        break
+    fi
+done
+if [ $FOUND_WG -eq 0 ]; then
+    if which awg >/dev/null 2>&1; then
+        FOUND_WG=1
+        echo "  [OK] Найден AmneziaWG"
+    elif which wg >/dev/null 2>&1; then
+        FOUND_WG=1
+        echo "  [OK] Найден WireGuard"
+    fi
+fi
+
+# Теперь анализируем версию ядра С УЧЁТОМ найденной утилиты
 case "$KERNEL_VER" in
     4.[4-9]*|4.[1-9][0-9]*|[5-9]*|[1-9][0-9]*)
         echo "  [OK] Ядро $KERNEL_VER полностью совместимо"
         ;;
     3.4*)
-        echo "  [WARN] Ядро 3.4.x может работать, но для AmneziaWG нужен модуль amneziawg"
-        WARNINGS=$((WARNINGS+1))
+        if [ $FOUND_WG -eq 1 ]; then
+            echo "  [OK] Ядро 3.4.x + найден модуль AWG/WG — совместимо"
+        else
+            echo "  [FAIL] Ядро 3.4.x без AWG/WG модуля. VPN не сможет работать."
+            ERRORS=$((ERRORS+1))
+        fi
         ;;
     *)
         echo "  [FAIL] Неизвестная версия ядра. Рекомендуется ядро 4.4+"
@@ -36,40 +66,9 @@ case "$KERNEL_VER" in
 esac
 
 # -------------------------------------------------------------------
-# 2. Утилита WireGuard/AmneziaWG (сначала ищем awg, потом wg)
+# 2. ipset
 # -------------------------------------------------------------------
-echo "--- 2. Утилита WireGuard/AmneziaWG ---"
-FOUND_WG=0
-for path in \
-    /usr/sbin/awg /usr/bin/awg /opt/bin/awg /opt/sbin/awg \
-    /usr/sbin/wg /usr/bin/wg /opt/bin/wg /opt/sbin/wg; do
-    if [ -x "$path" ]; then
-        FOUND_WG=1
-        case "$path" in
-            *awg) echo "  [OK] Найден AmneziaWG: $path" ;;
-            *wg)  echo "  [OK] Найден WireGuard: $path" ;;
-        esac
-        break
-    fi
-done
-if [ $FOUND_WG -eq 0 ]; then
-    # Запасной поиск через which
-    if which awg >/dev/null 2>&1; then
-        FOUND_WG=1
-        echo "  [OK] Найден AmneziaWG"
-    elif which wg >/dev/null 2>&1; then
-        FOUND_WG=1
-        echo "  [OK] Найден WireGuard"
-    else
-        echo "  [FAIL] Ни awg, ни wg не найдены. VPN-туннель не сможет работать."
-        ERRORS=$((ERRORS+1))
-    fi
-fi
-
-# -------------------------------------------------------------------
-# 3. ipset
-# -------------------------------------------------------------------
-echo "--- 3. ipset ---"
+echo "--- 2. ipset ---"
 FOUND_IPSET=0
 for path in /usr/sbin/ipset /usr/bin/ipset /opt/sbin/ipset /opt/bin/ipset; do
     if [ -x "$path" ]; then
@@ -85,9 +84,9 @@ else
 fi
 
 # -------------------------------------------------------------------
-# 4. iptables
+# 3. iptables
 # -------------------------------------------------------------------
-echo "--- 4. iptables ---"
+echo "--- 3. iptables ---"
 FOUND_IPT=0
 for path in /usr/sbin/iptables /usr/bin/iptables /opt/sbin/iptables /opt/bin/iptables; do
     if [ -x "$path" ]; then
@@ -103,9 +102,9 @@ else
 fi
 
 # -------------------------------------------------------------------
-# 5. wget или curl
+# 4. wget или curl
 # -------------------------------------------------------------------
-echo "--- 5. wget/curl ---"
+echo "--- 4. wget/curl ---"
 FOUND_DL=0
 for path in /usr/bin/wget /usr/sbin/wget /opt/bin/wget /usr/bin/curl /usr/sbin/curl /opt/bin/curl; do
     if [ -x "$path" ]; then
@@ -121,9 +120,9 @@ else
 fi
 
 # -------------------------------------------------------------------
-# 6. Свободное место в /etc/storage (порог 512 КБ)
+# 5. Свободное место в /etc/storage (порог 512 КБ)
 # -------------------------------------------------------------------
-echo "--- 6. Свободное место в /etc/storage ---"
+echo "--- 5. Свободное место в /etc/storage ---"
 if [ -d /etc/storage ]; then
     AVAIL=$(df -k /etc/storage 2>/dev/null | tail -1 | awk '{print $4}')
     TOTAL=$(df -k /etc/storage 2>/dev/null | tail -1 | awk '{print $2}')
@@ -144,9 +143,9 @@ else
 fi
 
 # -------------------------------------------------------------------
-# 7. Архитектура процессора
+# 6. Архитектура процессора
 # -------------------------------------------------------------------
-echo "--- 7. Архитектура процессора ---"
+echo "--- 6. Архитектура процессора ---"
 ARCH=$(uname -m)
 echo "  Обнаружена архитектура: $ARCH"
 case "$ARCH" in
@@ -160,9 +159,9 @@ case "$ARCH" in
 esac
 
 # -------------------------------------------------------------------
-# 8. Доступность GitHub
+# 7. Доступность GitHub
 # -------------------------------------------------------------------
-echo "--- 8. Доступность GitHub ---"
+echo "--- 7. Доступность GitHub ---"
 if ping -c 1 -W 1 raw.githubusercontent.com >/dev/null 2>&1; then
     echo "  [OK] GitHub доступен"
 else
