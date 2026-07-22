@@ -149,11 +149,11 @@ setup_iptables() {
 
     iptables -t mangle -D PREROUTING -m set --match-set "$IPSET_NAME" dst -j MARK --set-mark "$MARK_VALUE" 2>/dev/null
     iptables -t mangle -D PREROUTING -m set --match-set "$IPSET_NAME" dst -j CONNMARK --set-mark "$MARK_VALUE" 2>/dev/null
-    iptables -t mangle -D PREROUTING -m connmark --mark "$MARK_VALUE" -j CONNMARK --restore-mark 2>/dev/null
+    iptables -t mangle -D PREROUTING ! -i "$VPN_IFACE" -m connmark --mark "$MARK_VALUE" -j CONNMARK --restore-mark 2>/dev/null
 
     iptables -t mangle -A PREROUTING -m set --match-set "$IPSET_NAME" dst -j MARK --set-mark "$MARK_VALUE"
     iptables -t mangle -A PREROUTING -m set --match-set "$IPSET_NAME" dst -j CONNMARK --set-mark "$MARK_VALUE"
-    iptables -t mangle -A PREROUTING -m connmark --mark "$MARK_VALUE" -j CONNMARK --restore-mark
+    iptables -t mangle -A PREROUTING ! -i "$VPN_IFACE" -m connmark --mark "$MARK_VALUE" -j CONNMARK --restore-mark
 
     log "Правила iptables для $IPSET_NAME добавлены"
 	
@@ -360,6 +360,14 @@ chmod +x /etc/storage/ipset_update.sh
 # -----------------------------------------------------------------------------
 cat > /etc/storage/route_watchdog.sh << 'EOF_WATCHDOG'
 #!/bin/sh
+# Lock-файл: предотвращает запуск нескольких копий watchdog
+LOCK_FILE="/tmp/route_watchdog.lock"
+if [ -f "$LOCK_FILE" ]; then
+    exit 0
+fi
+touch "$LOCK_FILE"
+trap 'rm -f "$LOCK_FILE"' EXIT
+
 modprobe ip_set_hash_net 2>/dev/null
 modprobe xt_set 2>/dev/null
 modprobe ip6_set 2>/dev/null
@@ -397,8 +405,8 @@ while true; do
         echo "[$(date)] Watchdog: добавлено правило CONNMARK save" >> /tmp/route_watchdog.log
     fi
 
-    if ! iptables -t mangle -C PREROUTING -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null; then
-        iptables -t mangle -A PREROUTING -m connmark --mark 0xca6c -j CONNMARK --restore-mark
+    if ! iptables -t mangle -C PREROUTING ! -i wg0 -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null; then
+        iptables -t mangle -A PREROUTING ! -i wg0 -m connmark --mark 0xca6c -j CONNMARK --restore-mark
         echo "[$(date)] Watchdog: добавлено правило CONNMARK restore" >> /tmp/route_watchdog.log
     fi
 
@@ -470,10 +478,14 @@ chmod +x /etc/storage/started_script.sh
 # -----------------------------------------------------------------------------
 if [ -d /etc/storage/cron/crontabs ]; then
     CRON_FILE="/etc/storage/cron/crontabs/admin"
-    grep -q "ipset_update.sh" "$CRON_FILE" 2>/dev/null && sed -i '/ipset_update.sh/d' "$CRON_FILE"
+    sed -i '/ipset_update.sh\|route_watchdog.sh/d' "$CRON_FILE" 2>/dev/null
     echo "0 */6 * * * sh /etc/storage/ipset_update.sh > /tmp/ipset_update_cron.log 2>&1" >> "$CRON_FILE"
 	echo "@reboot /etc/storage/route_watchdog.sh &" >> "$CRON_FILE"
-    killall crond 2>/dev/null && crond
+    # Принудительно включаем Cron в NVRAM — защита от выключенного Cron в веб-морде
+    nvram set crond_enable=1 2>/dev/null
+    nvram commit 2>/dev/null
+    killall crond 2>/dev/null
+    crond
 fi
 
 # -----------------------------------------------------------------------------
