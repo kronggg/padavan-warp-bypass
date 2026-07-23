@@ -476,13 +476,6 @@ modprobe ip6_set_hash_net
 ( sleep 60 && sh /etc/storage/ipset_update.sh ) &
 ( sleep 90 && /etc/storage/route_watchdog.sh & ) &
 EOF_STARTED
-modprobe ip_set_hash_net
-modprobe xt_set
-modprobe ip6_set_hash_net
-
-( sleep 60 && sh /etc/storage/ipset_update.sh ) &
-( sleep 90 && /etc/storage/route_watchdog.sh & ) &
-EOF_STARTED
 
 chmod +x /etc/storage/started_script.sh
 

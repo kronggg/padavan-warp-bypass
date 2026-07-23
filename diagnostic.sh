@@ -105,11 +105,16 @@ else
     echo "  [WARN] Правило CONNMARK save (IPv4) отсутствует"
     WARNINGS=$((WARNINGS+1))
 fi
-if iptables -t mangle -C PREROUTING -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null; then
+if iptables -t mangle -C PREROUTING ! -i wg0 -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null; then
     echo "  [OK] Правило CONNMARK restore (IPv4) присутствует"
 else
-    echo "  [WARN] Правило CONNMARK restore (IPv4) отсутствует"
-    WARNINGS=$((WARNINGS+1))
+    # fallback: проверяем без ! -i wg0 (старая версия)
+    if iptables -t mangle -C PREROUTING -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null; then
+        echo "  [OK] Правило CONNMARK restore (IPv4) присутствует"
+    else
+        echo "  [WARN] Правило CONNMARK restore (IPv4) отсутствует"
+        WARNINGS=$((WARNINGS+1))
+    fi
 fi
 
 if ip6tables -t mangle -C PREROUTING -m set --match-set bypass_nets6 dst -j MARK --set-mark 0xca6c 2>/dev/null; then
