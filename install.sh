@@ -463,6 +463,12 @@ chmod +x /etc/storage/route_watchdog.sh
 cat > /etc/storage/started_script.sh << 'EOF_STARTED'
 #!/bin/sh
 
+# Принудительно включаем Cron (защита от выключения в веб-морде)
+nvram set crond_enable=1 2>/dev/null
+nvram commit 2>/dev/null
+killall crond 2>/dev/null
+crond
+
 modprobe ip_set_hash_net
 modprobe xt_set
 modprobe ip6_set_hash_net
