@@ -14,6 +14,7 @@ killall ipset_update.sh 2>/dev/null
 rm -f /etc/storage/ipset_update.sh
 rm -f /etc/storage/route_watchdog.sh
 rm -f /etc/storage/diagnostic.sh
+rm -f /etc/storage/started_script.sh
 
 # Удаляем CIDR-файлы и кэши
 rm -f /etc/storage/bypass_nets.cidr
@@ -21,6 +22,7 @@ rm -f /etc/storage/bypass_nets6.cidr
 rm -f /etc/storage/learned_ips.cache
 rm -f /etc/storage/bypass_nets.dump
 rm -f /tmp/ipset_update.lock
+rm -f /tmp/route_watchdog.lock
 
 # Очищаем логи
 rm -f /tmp/ipset_update.log
@@ -29,7 +31,7 @@ rm -f /tmp/ipset_update_cron.log
 
 # Удаляем задания cron
 if [ -f /etc/storage/cron/crontabs/admin ]; then
-    sed -i '/ipset_update.sh/d' /etc/storage/cron/crontabs/admin
+    sed -i '/ipset_update.sh\|route_watchdog.sh/d' /etc/storage/cron/crontabs/admin
     killall crond 2>/dev/null && crond
 fi
 
@@ -70,6 +72,10 @@ if [ -n "$DEFAULT_GW" ]; then
     ip route add default via "$DEFAULT_GW" dev "$WAN_IF" 2>/dev/null
     echo "Восстановлен маршрут по умолчанию: via $DEFAULT_GW dev $WAN_IF"
 fi
+
+# Сбрасываем NVRAM (только наши переменные, crond_enable не трогаем)
+nvram unset script_aft_net_start 2>/dev/null
+nvram commit 2>/dev/null
 
 # Сохраняем и перезагружаем
 mtd_storage.sh save

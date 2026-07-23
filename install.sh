@@ -473,6 +473,10 @@ EOF_STARTED
 
 chmod +x /etc/storage/started_script.sh
 
+# Регистрируем started_script.sh в NVRAM boot script (выполняется при каждой загрузке)
+nvram set script_aft_net_start="/etc/storage/started_script.sh" 2>/dev/null
+nvram commit 2>/dev/null
+
 # -----------------------------------------------------------------------------
 # 4. Cron (каждые 6 часов)
 # -----------------------------------------------------------------------------
